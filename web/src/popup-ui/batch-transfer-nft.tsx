@@ -3,7 +3,7 @@ import { app } from '../state'
 import Panel, { PanelType } from '../components/panel'
 import { useEffect, useState } from 'preact/hooks'
 // SOLANA: recipients are base58 ed25519 pubkeys validated with isSolanaAddress
-// (was ethers isAddress for 0x-hex). resolveName/getTransactionLink kept.
+// (was ethers isAddress for 0x-hex). getTransactionLink kept.
 import { getTransactionLink } from '../helpers/transaction-helpers'
 import { BatchTransferWrapper, NFTTransferState, TransferableNFT } from '../helpers/transfer-collectible'
 import { isSolanaAddress } from '../../../common/helpers/utils'
@@ -36,7 +36,8 @@ export interface State {
 export default function BatchTransferNFTWindow(props: Props) {
   const transactionHelper = new BatchTransferWrapper()
 
-  const [nft, setNFT] = useState<TransferableNFT>(props.nft ?? { chain_id: Polygon })
+  // SOLANA: cluster is fixed by deployment config; chain_id is vestigial.
+  const [nft, setNFT] = useState<TransferableNFT>(props.nft ?? { chain_id: 0 })
   const [error, setError] = useState<string>('')
   const [transferTo, setTransferTo] = useState<string[]>([])
   const [disabled, setDisabled] = useState<boolean>(false)
@@ -46,11 +47,13 @@ export default function BatchTransferNFTWindow(props: Props) {
 
   useEffect(() => {
     transactionHelper.isApproved(nft).then(setApproved)
-    setTransferTo(props.wallets?.map((w) => w.toLowerCase()) ?? [])
+    // SOLANA: base58 pubkeys are case-sensitive — never .toLowerCase().
+    setTransferTo(props.wallets ?? [])
   }, [])
 
   useEffect(() => {
-    setTransferTo(props.wallets?.map((w) => w.toLowerCase()) ?? [])
+    // SOLANA: base58 pubkeys are case-sensitive — never .toLowerCase().
+    setTransferTo(props.wallets ?? [])
   }, [props.wallets])
 
   useEffect(() => {
@@ -81,44 +84,26 @@ export default function BatchTransferNFTWindow(props: Props) {
       .finally(() => setRevoking(false))
   }
 
-  const submitDisabled = disabled || !transferTo.length || !nft.collection_address || !nft.chain_id || !nft.token_id
+  // SOLANA: the SPL mint (collection_address) is all that's needed; token_id and
+  // chain_id are not required on Solana.
+  const submitDisabled = disabled || !transferTo.length || !nft.collection_address
 
   return (
     <Form onSubmit={transfer}>
       <h3>Batch Transfer</h3>
 
+      {/* SOLANA: the NFT is identified by its SPL mint (base58). No token id /
+          chain selector — a Metaplex NFT is a single 1-supply mint on the
+          configured cluster. */}
       <TextField
-        name="ContractAddress"
-        label={'Contract address'}
+        name="MintAddress"
+        label={'NFT mint address'}
         value={nft.collection_address?.toString() ?? ''}
         onChange={(ev: TargetedEvent<HTMLInputElement>) => setNFT({ ...nft, collection_address: ev.currentTarget['value'] })}
-        placeholder="0x123456789..."
-        size={42}
-        maxLength={45}
+        placeholder="SPL mint address (base58)..."
+        size={44}
+        maxLength={44}
         disabled={disabled}
-      />
-      <TextField
-        name="TokenID"
-        label={'Token id'}
-        value={nft.token_id?.toString() ?? ''}
-        onChange={(ev: TargetedEvent<HTMLInputElement>) => setNFT({ ...nft, token_id: parseInt(ev.currentTarget['value'], 10) })}
-        size={5}
-        maxLength={5}
-        disabled={disabled}
-      />
-      <SelectField
-        name={'chainID'}
-        label={'Chain'}
-        options={{ '1': 'Ethereum', '137': 'Polygon' }}
-        value={nft.chain_id?.toString() || Polygon.toString()}
-        onChange={(e) => {
-          const chain_id = parseInt(e.currentTarget.value)
-          if (chain_id !== Polygon && chain_id !== Ethereum) {
-            setError(`Invalid chain id ${chain_id}`)
-            return
-          }
-          setNFT({ ...nft, chain_id: chain_id })
-        }}
       />
 
       <div class="f">
@@ -133,36 +118,24 @@ export default function BatchTransferNFTWindow(props: Props) {
         {error && <Panel type="danger">{error}</Panel>}
         <div>{transferState?.hash && <TransactionLink transactionLink={getTransactionLink(nft.chain_id, transferState?.hash)} />}</div>
 
-        {approved && !revoking && (!transferState?.state || transferState?.state === 'transferred') && (
-          <div>
-            You can <a onClick={revoke}>revoke approval</a> of our multi transfer contract
-          </div>
-        )}
+        {/* SOLANA: SPL transfers need no contract approval; revoke/approve are
+            no-ops kept for layout. Hidden unless something set approved. */}
         {approved && revoking && (
           <div>
-            <Spinner size={16} bg="light" /> Revoking contract approval
+            <Spinner size={16} bg="light" /> Working
           </div>
         )}
       </div>
 
       <div>
-        <b>This tool lets you transfer NFTs to multiple wallets in five steps:</b>
+        {/* SOLANA: each recipient receives a separate SPL token transfer of the
+            mint, signed in Phantom. */}
+        <b>This tool transfers an SPL NFT to one or more Solana wallets:</b>
         <ol>
-          <li>Switch wallet to correct network</li>
-          <li>
-            Approve our smart contract to transfer your NFTs to multiple wallets at the same time (contract code at{' '}
-            <a href={`https://etherscan.io/address/${BATCH_TRANSFER_ETH}#code`} target="_blank">
-              Etherscan
-            </a>{' '}
-            or{' '}
-            <a href={`https://polygonscan.com/address/${BATCH_TRANSFER_MATIC}#code`} target="_blank">
-              polygonscan
-            </a>
-            )
-          </li>
-          <li>Confirm the transaction and gas</li>
-          <li>Wait for transaction to complete</li>
-          <li>(optional) Revoke contract approval</li>
+          <li>Enter the NFT's SPL mint address</li>
+          <li>Add the recipient Solana (base58) addresses</li>
+          <li>Confirm each transfer in Phantom</li>
+          <li>Wait for the transactions to confirm</li>
         </ol>
       </div>
     </Form>

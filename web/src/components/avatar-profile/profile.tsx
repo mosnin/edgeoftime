@@ -42,13 +42,10 @@ export default function Profile(props: Props) {
       .then((data) => setCollections(data.collections ?? []))
   }, [walletOrUUId])
 
-  const walletAddress = (() => {
-    try {
-      return ethers.getAddress(walletOrUUId)
-    } catch {
-      return undefined
-    }
-  })()
+  // SOLANA: owner is a base58 ed25519 pubkey (case-sensitive — never lowercase).
+  // fetchUsersCollectibles resolves the owner's NFTs server-side via the DAS API
+  // (getActiveChain().rpcUrl getAssetsByOwner), mapping name/image/collection.
+  const walletAddress = isSolanaAddress(walletOrUUId) ? walletOrUUId : undefined
 
   const copyWallet = () =>
     copyTextToClipboard(
@@ -130,8 +127,9 @@ export default function Profile(props: Props) {
                   {ethTrunc(walletOrUUId)}
                 </a>{' '}
                 &mdash;{' '}
-                <a href={`https://etherscan.io/address/${walletOrUUId}`} target="_blank">
-                  Etherscan
+                {/* SOLANA: link to the Solana explorer for the active cluster. */}
+                <a href={`${getActiveChain().explorerUrl}/address/${walletOrUUId}`} target="_blank">
+                  Explorer
                 </a>
               </dd>
             </>

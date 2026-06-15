@@ -140,22 +140,25 @@ export default class Wearable extends Collectible {
     return new Wearable(res.rows[0])
   }
   /**
-   * Load the Wearable given the id (uuid) of the wearable
-   * @param chainid the chain ID 137=matic; 1=eth
-   * @param address the address of the collection;
-   * @param tokenId The tokenId;
+   * Load the Wearable given the on-chain collection + asset.
+   * SOLANA: `address` is the base58 collection mint and `tokenId` the base58
+   * asset mint (both case-sensitive — do NOT lowercase). `chain` is the Solana
+   * cluster identifier (optional; kept for signature compatibility).
    * Returns {Wearable}
    */
-  static async loadFromChainInfo(chainid: number, address: string, tokenId: number): Promise<Wearable | null> {
+  static async loadFromChainInfo(chain: number | string, address: string, tokenId: number | string): Promise<Wearable | null> {
+    // SOLANA: match the collection mint exactly (base58 is case-sensitive) and
+    // the asset mint as token_id; cluster comparison dropped as collections are
+    // single-cluster in this deployment.
     const res = await db.query(
       'embedded/get-wearable-from-chaininfo',
       `select wearables.*
     from wearables
-    inner join 
+    inner join
       collections
       on wearables.collection_id = collections.id
-    where lower(collections.address)=$2 and collections.chainid=$1 and token_id=$3`,
-      [chainid, address.toLowerCase(), tokenId],
+    where collections.address=$1 and token_id=$2`,
+      [address, String(tokenId)],
     )
 
     if (!res.rows[0]) {

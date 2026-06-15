@@ -625,22 +625,16 @@ export default class IslandsAdmin extends Component<Props, State> {
     },
     */
 
-    try {
-      const provider = new ethers.BrowserProvider(window.ethereum as any)
-      const signer = await provider.getSigner()
-
-      const contract = new ethers.Contract('0x79986aF15539de2db9A5086382daEdA917A9CF0C', PARCEL_CONTRACT_ABI.abi, signer)
-
-      const owner = '0x2D891ED45C4C3EAB978513DF4B92a35Cf131d2e2'
-      const tx = await contract.mint(owner, id, parcel.x1, parcel.y1, parcel.z1, parcel.x2, parcel.y2, parcel.z2, ethers.parseEther('0'))
-
-      console.log('Transaction submitted:', tx.hash)
-
-      await tx.wait()
-      console.log('Transaction confirmed')
-    } catch (err) {
-      console.error('On-chain minting failed:', err)
-    }
+    // SOLANA: was an ethers ERC-721 mint() call on an EVM parcel contract.
+    // On Solana each parcel is a Metaplex NFT minted into the parcels collection,
+    // with the parcel's geometry/metadata stored off-chain and the mint pubkey
+    // recorded on the parcel (properties.solana_mint).
+    // SOLANA TODO: mint a Metaplex parcel NFT for `id` and persist its mint
+    // pubkey. The on-chain mint logic lives in scripts/solana-mint-parcels.ts —
+    // reuse its parcel-mint path (or call a server endpoint that wraps it),
+    // signing with the connected Phantom wallet. Until wired, this is a no-op.
+    const owner = app.state.wallet && isSolanaAddress(app.state.wallet) ? app.state.wallet : ''
+    console.log('SOLANA: parcel mint stubbed for parcel', id, 'owner', owner || '(unowned)')
   }
 
   onSave = async (e: any) => {
