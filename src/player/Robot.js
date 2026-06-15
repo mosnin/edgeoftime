@@ -110,22 +110,34 @@ export default class Robot {
     box(0.26, 0.12, 0.34, steel, -0.16, -0.85, 0.04);
     box(0.26, 0.12, 0.34, steel, 0.16, -0.85, 0.04);
 
-    // ---- jetpack (on the back, +Z) ------------------------------------------
-    box(0.5, 0.5, 0.2, darkMetal, 0, 0.2, 0.32); // pack body
+    // ---- jetpack (mounted on the back, +Z) ----------------------------------
+    // Central mounting plate against the torso.
+    box(0.46, 0.55, 0.12, darkMetal, 0, 0.18, 0.3);
 
-    const nozzleGeo = new THREE.CylinderGeometry(0.08, 0.11, 0.18, 10);
-    for (const sx of [-0.18, 0.18]) {
-      const nozzle = new THREE.Mesh(nozzleGeo, steel);
-      nozzle.position.set(sx, -0.1, 0.38);
+    // Two fuel cylinders flanking the spine, each with a rounded cap and a
+    // downward thruster nozzle + flame.
+    const tankGeo = new THREE.CylinderGeometry(0.13, 0.13, 0.62, 14);
+    const capGeo = new THREE.CylinderGeometry(0.1, 0.13, 0.1, 14);
+    const nozzleGeo = new THREE.CylinderGeometry(0.07, 0.12, 0.16, 12);
+    for (const sx of [-0.22, 0.22]) {
+      const tank = new THREE.Mesh(tankGeo, steel);
+      tank.position.set(sx, 0.2, 0.42);
+      this.model.add(tank);
+
+      const cap = new THREE.Mesh(capGeo, orange); // accent cap on top
+      cap.position.set(sx, 0.54, 0.42);
+      this.model.add(cap);
+
+      const nozzle = new THREE.Mesh(nozzleGeo, darkMetal); // points down
+      nozzle.position.set(sx, -0.16, 0.42);
       this.model.add(nozzle);
 
       const flame = new THREE.Mesh(
-        new THREE.ConeGeometry(0.1, 0.45, 10),
+        new THREE.ConeGeometry(0.11, 0.5, 12),
         flameMat
       );
-      // cone points up by default; rotate so the tip points down
-      flame.rotation.x = Math.PI;
-      flame.position.set(sx, -0.42, 0.38);
+      flame.rotation.x = Math.PI; // tip points down
+      flame.position.set(sx, -0.5, 0.42);
       flame.visible = false;
       this.model.add(flame);
       this._flames.push(flame);

@@ -13,7 +13,7 @@ export const PLANETS = [
     color: [0.30, 0.62, 0.34],
     radius: 22,
     orbitRadius: 160,
-    orbitSpeed: 0.060,
+    orbitSpeed: 0.16,
     angle: 0.0,
     params: {
       amplitude: 18,
@@ -29,7 +29,7 @@ export const PLANETS = [
     color: [0.84, 0.66, 0.36],
     radius: 18,
     orbitRadius: 280,
-    orbitSpeed: 0.045,
+    orbitSpeed: 0.12,
     angle: 1.7,
     params: {
       amplitude: 26,
@@ -45,7 +45,7 @@ export const PLANETS = [
     color: [0.70, 0.85, 0.96],
     radius: 26,
     orbitRadius: 430,
-    orbitSpeed: 0.034,
+    orbitSpeed: 0.09,
     angle: 3.4,
     params: {
       amplitude: 14,
@@ -61,7 +61,7 @@ export const PLANETS = [
     color: [0.55, 0.40, 0.36],
     radius: 16,
     orbitRadius: 580,
-    orbitSpeed: 0.028,
+    orbitSpeed: 0.07,
     angle: 5.0,
     params: {
       amplitude: 34,
@@ -77,7 +77,7 @@ export const PLANETS = [
     color: [0.24, 0.46, 0.78],
     radius: 28,
     orbitRadius: 740,
-    orbitSpeed: 0.022,
+    orbitSpeed: 0.055,
     angle: 2.3,
     params: {
       amplitude: 10,
@@ -93,7 +93,7 @@ export const PLANETS = [
     color: [0.74, 0.34, 0.22],
     radius: 20,
     orbitRadius: 880,
-    orbitSpeed: 0.018,
+    orbitSpeed: 0.045,
     angle: 4.1,
     params: {
       amplitude: 40,

@@ -67,6 +67,33 @@ export default class World {
     return this.gen.heightAt(x, z);
   }
 
+  // Generate a chunk's voxel DATA immediately if it's missing (cheap CPU work).
+  // Meshing (the expensive GPU work) is still deferred via the dirty flag.
+  _ensureChunk(cx, cz) {
+    const key = this._key(cx, cz);
+    let chunk = this.chunks.get(key);
+    if (!chunk) {
+      chunk = new Chunk(cx, cz);
+      this.gen.fillChunk(chunk);
+      chunk.dirty = true;
+      this.chunks.set(key, chunk);
+    }
+    return chunk;
+  }
+
+  // Synchronously generate all chunk data within `radius` chunks of a point.
+  // Used at spawn so the player always lands on SOLID ground (collision reads
+  // block data, which must exist before the first physics step).
+  prime(centerPos, radius = 2) {
+    const ccx = floorDiv(Math.floor(centerPos.x), CHUNK_SIZE);
+    const ccz = floorDiv(Math.floor(centerPos.z), CHUNK_SIZE);
+    for (let dz = -radius; dz <= radius; dz++) {
+      for (let dx = -radius; dx <= radius; dx++) {
+        this._ensureChunk(ccx + dx, ccz + dz);
+      }
+    }
+  }
+
   // ---- Chunk load / unload / remesh ----------------------------------------
 
   update(centerPos) {
@@ -75,6 +102,16 @@ export default class World {
     this._center = { cx: ccx, cz: ccz };
 
     const R = this.renderRadius;
+
+    // 0) ALWAYS keep the chunks immediately around the player generated, so the
+    // ground is never missing under your feet while exploring (data only —
+    // cheap). Meshing of these still goes through the budgeted pass below.
+    const COLLISION_R = 2;
+    for (let dz = -COLLISION_R; dz <= COLLISION_R; dz++) {
+      for (let dx = -COLLISION_R; dx <= COLLISION_R; dx++) {
+        this._ensureChunk(ccx + dx, ccz + dz);
+      }
+    }
 
     // 1) Generate missing chunks within renderRadius (budgeted, nearest first).
     let generated = 0;

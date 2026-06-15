@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "start": "python3 -m http.server 8000",
-    "test": "node test/smoke.mjs && node test/scene.mjs"
+    "test": "node test/smoke.mjs && node test/scene.mjs && node test/render.mjs"
   },
   "keywords": ["voxel", "threejs", "game", "sandbox"],
   "license": "MIT",

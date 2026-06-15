@@ -8,7 +8,6 @@ const BOOST_MULT = 3.2;
 const THRUST_ACCEL = 60;     // world units / s^2 while a thrust key is held
 const DAMPING = 0.85;        // per-second velocity retention factor (mild)
 const LAND_MARGIN = 25;      // how close to a planet's surface to allow landing
-const LOOK_SENS = 0.0022;    // mouse delta -> radians
 
 export default class SpaceMap {
   constructor(game) {
@@ -79,12 +78,15 @@ export default class SpaceMap {
       this.scene.add(robot.model);
     }
 
-    // Position the robot.
-    if (payload && payload.planet) {
-      // Place just outside the given planet's current position.
-      const entry = this._planets.find((p) => p.desc === payload.planet)
-        || this._planets.find((p) => p.desc.name === payload.planet.name);
-      const desc = entry ? entry.desc : payload.planet;
+    // Position the robot near a planet (the one we came from, or the first one
+    // by default) so you immediately see a proper-scale, orbiting world rather
+    // than empty space next to the sun.
+    const targetPlanet = (payload && payload.planet) || PLANETS[0];
+    if (targetPlanet) {
+      // Place just outside the target planet's current position.
+      const entry = this._planets.find((p) => p.desc === targetPlanet)
+        || this._planets.find((p) => p.desc.name === targetPlanet.name);
+      const desc = entry ? entry.desc : targetPlanet;
       const pos = entry
         ? entry.mesh.position.clone()
         : new THREE.Vector3(
@@ -127,8 +129,9 @@ export default class SpaceMap {
     const fPressed = input.pressed("KeyF");
     const frame = input.consume();
 
-    // Mouse look.
-    robot.applyLook(frame.dx * LOOK_SENS, frame.dy * LOOK_SENS);
+    // Mouse look. applyLook() already applies the robot's look sensitivity, so
+    // pass the raw mouse deltas (multiplying again here zeroed out the motion).
+    robot.applyLook(frame.dx, frame.dy);
 
     // 6DOF thrust input.
     const fwd = robot.forward();

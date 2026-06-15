@@ -93,8 +93,11 @@ export default class PlanetMap {
     // --- Spawn the robot -------------------------------------------------
     const spawnX = 0;
     const spawnZ = 0;
-    // Generate chunks around spawn first so terrain exists.
+    // Generate the spawn-area chunk DATA synchronously so collision is solid
+    // before the first physics step (otherwise the robot falls through terrain
+    // that hasn't streamed in yet). Then kick off meshing.
     const probe = new THREE.Vector3(spawnX, 0, spawnZ);
+    this.world.prime(probe, 2);
     this.world.update(probe);
     const surfaceY = this.world.heightAt(spawnX, spawnZ);
     const spawnY = surfaceY + 4;

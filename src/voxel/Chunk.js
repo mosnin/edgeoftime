@@ -104,8 +104,10 @@ export class Chunk {
               normals.push(face.dir[0], face.dir[1], face.dir[2]);
               colors.push(r, g, b);
             }
-            // Two triangles per quad.
-            indices.push(vert, vert + 1, vert + 2, vert + 2, vert + 1, vert + 3);
+            // Two triangles per quad. Winding is CCW when viewed from OUTSIDE
+            // the block (front faces point along face.dir), so Three.js's default
+            // backface culling keeps the visible faces — not the inner ones.
+            indices.push(vert, vert + 2, vert + 1, vert + 2, vert + 3, vert + 1);
             vert += 4;
           }
         }
