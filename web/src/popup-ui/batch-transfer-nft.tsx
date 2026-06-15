@@ -152,7 +152,8 @@ export function WalletManager({ propsWallets, onChange }: { propsWallets?: strin
   }
 
   const removeWallet = (value: string) => {
-    setWallets((wallets) => wallets.filter((w) => w.toLowerCase() !== value.toLowerCase()))
+    // SOLANA: base58 pubkeys are case-sensitive — compare exactly.
+    setWallets((wallets) => wallets.filter((w) => w !== value))
   }
 
   return (
@@ -193,7 +194,8 @@ function AddWallet(props: { addWallets: (v: string[]) => void; wallets: string[]
   const validateAddresses = (newWallets: string) => {
     setDisabled(true)
     const wallets = newWallets.split(',')
-    const promises = wallets.filter((addr) => app.state?.wallet?.toLowerCase() !== addr.toLowerCase()).map((addr) => getAddress(addr))
+    // SOLANA: base58 pubkeys are case-sensitive — compare without lowercasing.
+    const promises = wallets.filter((addr) => app.state?.wallet !== addr.trim()).map((addr) => getAddress(addr))
 
     return Promise.all(promises)
       .then((addresses) => {
@@ -205,20 +207,15 @@ function AddWallet(props: { addWallets: (v: string[]) => void; wallets: string[]
       .finally(() => setDisabled(false))
   }
 
+  // SOLANA: recipients are base58 ed25519 pubkeys. No ENS / name resolution and
+  // no lowercasing (base58 is case-sensitive).
   const getAddress = async (candidate: string): Promise<string> => {
-    let address: string = candidate.trim().toLowerCase()
-    if (address.endsWith('.eth')) {
-      const reverseLookup = (await resolveName(candidate)) ?? ''
-      if (!reverseLookup) {
-        throw new Error(`'${address}' doesn't resolve to an wallet address`)
-      }
-      address = reverseLookup?.toLowerCase()
-    }
-    if (!isAddress(address)) {
-      throw new Error(`Address '${address}' is not valid`)
+    const address: string = candidate.trim()
+    if (!isSolanaAddress(address)) {
+      throw new Error(`Address '${address}' is not a valid Solana address`)
     }
     // Check we haven't already recorded that address.
-    if (props.wallets.find((w) => w.toLowerCase() == address?.toLowerCase())) {
+    if (props.wallets.find((w) => w === address)) {
       throw new Error('Address already listed')
     }
     return address
@@ -239,7 +236,7 @@ function AddWallet(props: { addWallets: (v: string[]) => void; wallets: string[]
 
   return (
     <div>
-      <input ref={inputEl} type="text" disabled={disabled} placeholder="Address or ENS" value={wallet} onChange={handleOnChange} onKeyPress={handleEnter} />
+      <input ref={inputEl} type="text" disabled={disabled} placeholder="Solana address (base58)" value={wallet} onChange={handleOnChange} onKeyPress={handleEnter} />
       &nbsp;
       <button disabled={disabled} onClick={handleAdd}>
         Add
