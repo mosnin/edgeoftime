@@ -16,9 +16,14 @@ const DESCEND_THRUST = 30;     // extra downward accel while holding Shift
 const WALK_SPEED = 9;          // base horizontal target speed
 const BOOST_MULT = 1.9;        // Ctrl boost
 const ACCEL = 12;              // horizontal velocity lerp rate
-const TAKEOFF_ALTITUDE = 120;  // absolute Y to enable take-off
 const FOG_NEAR = 24;
 const FOG_FAR = 90;
+
+// Atmosphere: climb above ATMO_FADE_START and the sky darkens toward space;
+// reach ATMO_TOP and you break orbit (auto-transition to the space map).
+const ATMO_FADE_START = 95;
+const ATMO_TOP = 175;
+const SPACE_COLOR = new THREE.Color(0x05060a);
 
 // Pick a sky color from the planet palette / color so each planet feels distinct.
 function skyColorFor(planet) {
@@ -62,6 +67,12 @@ export default class PlanetMap {
   onEnter(payload) {
     const game = this.game;
     this.planet = payload && payload.planet ? payload.planet : null;
+
+    // Tight camera range on the planet for solid voxel depth precision
+    // (SpaceMap opens this back up for the vast solar system).
+    game.camera.near = 0.1;
+    game.camera.far = 2000;
+    game.camera.updateProjectionMatrix();
 
     // --- Sky + fog -------------------------------------------------------
     const skyColor = skyColorFor(this.planet);
@@ -118,7 +129,7 @@ export default class PlanetMap {
     game.hud.setMode("Jetpack");
     game.hud.buildHotbar(HOTBAR);
     game.hud.setActiveSlot(HOTBAR.indexOf(this.building.selected));
-    game.hud.setHint("Fly high and press F to take off");
+    game.hud.setHint("Fly straight up to leave the atmosphere");
   }
 
   update(dt) {
@@ -204,16 +215,33 @@ export default class PlanetMap {
     // --- HUD coords ------------------------------------------------------
     game.hud.setCoords(robot.position.x, robot.position.y, robot.position.z);
 
-    // --- Take-off --------------------------------------------------------
-    const highEnough = robot.position.y > TAKEOFF_ALTITUDE;
-    if (highEnough) {
-      game.hud.setHint("Press F to take off");
-      if (input.pressed("KeyF")) {
+    // --- Atmosphere: fly up to leave the planet -------------------------
+    const y = robot.position.y;
+    if (y > ATMO_FADE_START) {
+      // Fade sky + fog from the planet's sky color toward space-black as you
+      // ascend, and open the fog so the surface stays visible below you.
+      const t = Math.min(1, (y - ATMO_FADE_START) / (ATMO_TOP - ATMO_FADE_START));
+      const faded = this._skyColor.clone().lerp(SPACE_COLOR, t);
+      this.scene.background = faded;
+      if (this.scene.fog) {
+        this.scene.fog.color.copy(faded);
+        this.scene.fog.far = FOG_FAR + t * 500;
+      }
+      game.hud.setHint(t < 1 ? "Leaving atmosphere…" : "Breaking orbit…");
+
+      // Broke orbit -> hand off to space (MapManager adds the black fade).
+      if (y >= ATMO_TOP) {
         game.switchMap("space", { planet: this.planet });
         return;
       }
     } else {
-      game.hud.setHint("Fly high and press F to take off");
+      // Back in the lower atmosphere: restore the normal sky.
+      this.scene.background = this._skyColor;
+      if (this.scene.fog) {
+        this.scene.fog.color.copy(this._skyColor);
+        this.scene.fog.far = FOG_FAR;
+      }
+      game.hud.setHint("Fly straight up to leave the atmosphere");
     }
   }
 

@@ -11,9 +11,9 @@ export const PLANETS = [
     name: "Verdance",
     seed: 10427,
     color: [0.30, 0.62, 0.34],
-    radius: 22,
-    orbitRadius: 160,
-    orbitSpeed: 0.16,
+    radius: 90,
+    orbitRadius: 900,
+    orbitSpeed: 0.032,
     angle: 0.0,
     params: {
       amplitude: 18,
@@ -27,9 +27,9 @@ export const PLANETS = [
     name: "Dunaris",
     seed: 88231,
     color: [0.84, 0.66, 0.36],
-    radius: 18,
-    orbitRadius: 280,
-    orbitSpeed: 0.12,
+    radius: 70,
+    orbitRadius: 1700,
+    orbitSpeed: 0.022,
     angle: 1.7,
     params: {
       amplitude: 26,
@@ -43,9 +43,9 @@ export const PLANETS = [
     name: "Glacior",
     seed: 51199,
     color: [0.70, 0.85, 0.96],
-    radius: 26,
-    orbitRadius: 430,
-    orbitSpeed: 0.09,
+    radius: 110,
+    orbitRadius: 2600,
+    orbitSpeed: 0.016,
     angle: 3.4,
     params: {
       amplitude: 14,
@@ -59,9 +59,9 @@ export const PLANETS = [
     name: "Ferrux",
     seed: 73604,
     color: [0.55, 0.40, 0.36],
-    radius: 16,
-    orbitRadius: 580,
-    orbitSpeed: 0.07,
+    radius: 65,
+    orbitRadius: 3500,
+    orbitSpeed: 0.012,
     angle: 5.0,
     params: {
       amplitude: 34,
@@ -75,9 +75,9 @@ export const PLANETS = [
     name: "Aquelle",
     seed: 29845,
     color: [0.24, 0.46, 0.78],
-    radius: 28,
-    orbitRadius: 740,
-    orbitSpeed: 0.055,
+    radius: 120,
+    orbitRadius: 4600,
+    orbitSpeed: 0.009,
     angle: 2.3,
     params: {
       amplitude: 10,
@@ -91,9 +91,9 @@ export const PLANETS = [
     name: "Cindara",
     seed: 64012,
     color: [0.74, 0.34, 0.22],
-    radius: 20,
-    orbitRadius: 880,
-    orbitSpeed: 0.045,
+    radius: 80,
+    orbitRadius: 5800,
+    orbitSpeed: 0.007,
     angle: 4.1,
     params: {
       amplitude: 40,
@@ -107,8 +107,8 @@ export const PLANETS = [
 
 // A few thousand stars scattered on a large sphere shell around the scene.
 export function buildStarfield() {
-  const COUNT = 3500;
-  const SHELL = 3000;
+  const COUNT = 4500;
+  const SHELL = 40000;
   const positions = new Float32Array(COUNT * 3);
 
   for (let i = 0; i < COUNT; i++) {
@@ -127,7 +127,7 @@ export function buildStarfield() {
 
   const material = new THREE.PointsMaterial({
     color: 0xf2f4ff,
-    size: 2,
+    size: 2.4,
     sizeAttenuation: false,
     depthWrite: false,
   });
@@ -140,7 +140,7 @@ export function buildStarfield() {
 
 // Central sun: a glowing emissive sphere plus a warm point light at the origin.
 export function buildSun() {
-  const geometry = new THREE.SphereGeometry(50, 48, 32);
+  const geometry = new THREE.SphereGeometry(400, 64, 48);
   const material = new THREE.MeshBasicMaterial({
     color: 0xfff3c0,
     fog: false,
@@ -149,7 +149,8 @@ export function buildSun() {
   mesh.name = "sun";
   mesh.position.set(0, 0, 0);
 
-  const light = new THREE.PointLight(0xfff0cf, 2.6, 8000, 0.0);
+  // distance 0 = no falloff, so even the outermost planet is lit.
+  const light = new THREE.PointLight(0xfff0cf, 2.6, 0, 0.0);
   light.position.set(0, 0, 0);
 
   // Suggested ambient level for the consuming map (kept on the return object).

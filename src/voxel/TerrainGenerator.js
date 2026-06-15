@@ -53,6 +53,27 @@ export default class TerrainGenerator {
     return (h >>> 0) / 4294967296;
   }
 
+  // 3D deterministic hash (gx,gy,gz) -> [0,1). Used for ore veins underground.
+  _hash3(gx, gy, gz) {
+    let h = (Math.imul(gx | 0, 374761393) ^ Math.imul(gy | 0, 1013904223) ^ Math.imul(gz | 0, 668265263)) | 0;
+    h = Math.imul(h ^ (h >>> 13), 1274126177) | 0;
+    h ^= h >>> 16;
+    return (h >>> 0) / 4294967296;
+  }
+
+  // Underground ore: deeper = rarer/more valuable. Returns an ore block id or
+  // BLOCK.STONE. Driven by 3D hash so veins are stable from the seed.
+  _oreAt(gx, gy, gz, height) {
+    const depth = height - gy; // how far below the surface
+    if (depth < 3) return BLOCK.STONE;
+    const r = this._hash3(gx, gy, gz);
+    // Gold: only deep & rare. Iron: medium. Coal: common & shallower.
+    if (gy < 10 && r < 0.012) return BLOCK.GOLD_ORE;
+    if (gy < 22 && r < 0.028) return BLOCK.IRON_ORE;
+    if (r < 0.045) return BLOCK.COAL_ORE;
+    return BLOCK.STONE;
+  }
+
   _treesEnabled() {
     return (this.palette === "terran" || this.palette === "forest") && this.treeDensity > 0;
   }
@@ -70,24 +91,49 @@ export default class TerrainGenerator {
         const gz = baseZ + z;
         const height = this.heightAt(gx, gz);
 
-        // Column: stone, then a few dirt under surface, then the surface block.
+        // Surface variation: occasional gravel / cobblestone patches and snow
+        // caps on tall (or icy) terrain. Deterministic from the column hash.
+        const ph = this._hash01(gx, gz);
+        const patch = this._hash01(gx + 7919, gz - 104729); // independent stream
+        const snowy = (this.palette === "ice") || height >= this.baseHeight + this.amplitude * 0.55;
+
+        // Column: stone (with ore veins), dirt under surface, then surface block.
         const dirtDepth = 3;
         for (let y = 0; y <= height; y++) {
           let id;
           if (y === height) {
-            // Underwater surfaces become sand/dirt-ish; keep it simple: sand if
-            // submerged for terran/forest, else palette surface.
+            // Underwater surfaces become sand; snow caps on high/icy terrain;
+            // gravel patches; otherwise the palette surface block.
             if (y < water && (this.palette === "terran" || this.palette === "forest")) {
               id = BLOCK.SAND;
+            } else if (y >= water && snowy && ph > 0.15) {
+              id = BLOCK.SNOW;
+            } else if (y >= water && patch < 0.05 && this.palette !== "desert") {
+              id = BLOCK.GRAVEL;
             } else {
               id = surfaceBlock;
             }
           } else if (y >= height - dirtDepth) {
             id = (this.palette === "desert") ? BLOCK.SAND : BLOCK.DIRT;
+            // Cobblestone blotches just under the surface on rocky worlds.
+            if (this.palette === "rock" && patch < 0.18) id = BLOCK.COBBLESTONE;
           } else {
-            id = BLOCK.STONE;
+            id = this._oreAt(gx, y, gz, height);
           }
           chunk.setLocal(x, y, z, id);
+        }
+
+        // Cactus: sometimes on dry desert sand above water, inset from edges.
+        if (this.palette === "desert" && height >= water &&
+            x >= 1 && x <= CHUNK_SIZE - 2 && z >= 1 && z <= CHUNK_SIZE - 2) {
+          if (this._hash01(gx * 13 + 5, gz * 29 + 11) < 0.012) {
+            const cactusH = 2 + Math.floor(this._hash01(gx, gz) * 3); // 2..4
+            for (let i = 1; i <= cactusH && height + i < CHUNK_HEIGHT; i++) {
+              if (chunk.getLocal(x, height + i, z) === BLOCK.AIR) {
+                chunk.setLocal(x, height + i, z, BLOCK.CACTUS);
+              }
+            }
+          }
         }
 
         // Water fill: if terrain is below the water level, fill the gap.

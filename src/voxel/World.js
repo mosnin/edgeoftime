@@ -6,6 +6,7 @@ import * as THREE from "three";
 import { Chunk, CHUNK_SIZE, CHUNK_HEIGHT } from "./Chunk.js";
 import { BLOCK, isSolid } from "./blocks.js";
 import TerrainGenerator from "./TerrainGenerator.js";
+import { buildAtlas } from "./textures.js";
 
 // Per-frame work caps (the key anti-lag measure).
 const GEN_BUDGET = 2;     // new chunks generated per update()
@@ -20,8 +21,15 @@ export default class World {
     this.gen = new TerrainGenerator(planet);
     this.chunks = new Map();                 // key `${cx},${cz}` -> Chunk
     this.group = new THREE.Group();
+    // Procedural texture atlas (null when headless — tests run without canvas).
+    // With a map, the texture supplies block hue + detail and the grayscale
+    // vertex color provides per-face directional shading. Without it, we fall
+    // back to plain grayscale shading.
+    this.atlas = buildAtlas();
     this.material = new THREE.MeshStandardMaterial({
+      map: this.atlas || null,
       vertexColors: true, roughness: 1, metalness: 0,
+      alphaTest: this.atlas ? 0.5 : 0,
     });
     this.renderRadius = 6;                    // in chunks
     this._center = { cx: 0, cz: 0 };
@@ -259,6 +267,7 @@ export default class World {
       while (this.group.children.length) this.group.remove(this.group.children[0]);
     }
     if (this.material) this.material.dispose();
+    if (this.atlas) { this.atlas.dispose(); this.atlas = null; }
     this.chunks.clear();
   }
 }

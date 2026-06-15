@@ -73,6 +73,13 @@ export default class SpaceMap {
     const game = this.game;
     const robot = game.robot;
 
+    // The solar system is vast — open up the camera's far plane so distant
+    // planets and stars are visible. (PlanetMap restores a tighter range for
+    // voxel depth precision.)
+    game.camera.near = 1;
+    game.camera.far = 120000;
+    game.camera.updateProjectionMatrix();
+
     // Add the shared robot model to this scene.
     if (robot.model && robot.model.parent !== this.scene) {
       this.scene.add(robot.model);
