@@ -162,23 +162,26 @@ export default function AvatarsController(db: Db, passport: PassportStatic, app:
 
   app.post('/api/avatar/owns/:chain_identifier/:contract/:token_id', cache('1 minute'), passport.authenticate(['jwt', 'anonymous'], { session: false }), async (req, res) => {
     const wallet = (req.user as Express.User & { wallet?: string })?.wallet
-    if (!wallet || !ethers.isAddress(wallet)) {
+    // SOLANA: wallet is a base58 ed25519 pubkey, not a 0x address
+    if (!wallet || !isSolanaAddress(wallet)) {
       res.status(404).json({ success: false })
       return
     }
 
-    if (!['matic', 'eth'].includes(req.params.chain_identifier)) {
+    // SOLANA: only Solana is supported; chain_identifier should be 'solana'
+    if (!['solana'].includes(req.params.chain_identifier)) {
       res.status(400).json({ success: false, message: 'Unsupported' })
       return
     }
-    if (!req.params.contract || !ethers.isAddress(req.params.contract)) {
+    // SOLANA: contract is the NFT/collection mint (base58), not a 0x address
+    if (!req.params.contract || !isSolanaAddress(req.params.contract)) {
       res.status(404).json({ success: false })
       return
     }
 
     const token: tokensToEnter = {
       type: undefined!,
-      chain: req.params.chain_identifier == 'eth' ? 1 : 137,
+      chain: req.params.chain_identifier,
       address: req.params.contract,
       tokenId: req.params.token_id,
     }
@@ -192,23 +195,26 @@ export default function AvatarsController(db: Db, passport: PassportStatic, app:
   // This is mainly used by the public, especially scripting;
   app.get('/api/avatar/owns/:chain_identifier/:contract/:token_id', apiRateLimit, cache('1 minute'), async (req, res) => {
     const wallet = req.query?.wallet
-    if (!wallet || typeof wallet !== 'string' || !ethers.isAddress(wallet)) {
+    // SOLANA: wallet is a base58 ed25519 pubkey, not a 0x address
+    if (!wallet || typeof wallet !== 'string' || !isSolanaAddress(wallet)) {
       res.status(200).json({ success: false })
       return
     }
 
-    if (!['matic', 'eth'].includes(req.params.chain_identifier)) {
+    // SOLANA: only Solana is supported; chain_identifier should be 'solana'
+    if (!['solana'].includes(req.params.chain_identifier)) {
       res.status(400).json({ success: false, message: 'Unsupported' })
       return
     }
-    if (!req.params.contract || !ethers.isAddress(req.params.contract)) {
+    // SOLANA: contract is the NFT/collection mint (base58), not a 0x address
+    if (!req.params.contract || !isSolanaAddress(req.params.contract)) {
       res.status(404).json({ success: false })
       return
     }
 
     const token: tokensToEnter = {
       type: undefined!,
-      chain: req.params.chain_identifier == 'eth' ? 1 : 137,
+      chain: req.params.chain_identifier,
       address: req.params.contract,
       tokenId: req.params.token_id,
     }
@@ -262,7 +268,8 @@ export default function AvatarsController(db: Db, passport: PassportStatic, app:
         isValid = false
         continue
       }
-      if (!ethers.isAddress(wallet)) {
+      // SOLANA: validate base58 Solana pubkey instead of 0x EVM address
+      if (!isSolanaAddress(wallet)) {
         isValid = false
       }
     }

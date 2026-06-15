@@ -2,7 +2,11 @@ import { simpleHash } from '../../common/helpers/utils'
 import config from '../../common/config'
 import * as querystring from 'querystring'
 import { OpenSeaNftModelDetailedV2, OpenSeaNftModelDetailedV2Extended, TraitRecord } from '../../common/messages/api-opensea'
-import { isAddress } from 'ethers'
+// SOLANA: dropped ethers `isAddress`; validate addresses as base58 Solana pubkeys.
+// NOTE: this module wraps the legacy OpenSea (EVM) proxy. The Solana NFT-display
+// path goes through DAS/Metaplex (WP17); these address checks are kept only so the
+// existing signatures/exports keep validating their `address`-shaped inputs.
+import { isSolanaAddress as isAddress } from '../../common/helpers/utils'
 import { isValidUrl } from '../../common/helpers/utils'
 
 /** Base mainnet (OpenSea chain slug `base`). Requires `chain_id=8453` on `/v2/opensea` (proxy CDN). */

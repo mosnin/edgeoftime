@@ -2,7 +2,9 @@ import { render } from 'preact'
 import Panel from '../components/panel'
 import { NFTTransferState, TransferCollectibleHelper } from '../helpers/transfer-collectible'
 import WearableHelper from '../helpers/collectible'
-import { isAddress } from 'ethers'
+// SOLANA: recipient is a base58 ed25519 pubkey, validated with isSolanaAddress
+// (was ethers isAddress for 0x-hex).
+import { isSolanaAddress } from '../../../common/helpers/utils'
 import { Spinner } from '../spinner'
 import { TextField } from '../components/fields/text-field'
 import { NumberField } from '../components/fields/number-fields'
@@ -40,7 +42,8 @@ export function TransferCollectibleWindow(props: Props) {
 
   const transactionHelper = new TransferCollectibleHelper()
   const disabled = balance === 0 || transferState !== null
-  const submitDisabled = disabled || !isAddress(transferTo) || quantity < 1 || quantity > (balance ?? 0)
+  // SOLANA: validate recipient as a base58 Solana pubkey.
+  const submitDisabled = disabled || !isSolanaAddress(transferTo) || quantity < 1 || quantity > (balance ?? 0)
 
   useEffect(() => {
     if (!props.collectible.collection_address) throw new Error('no collection address')
@@ -92,9 +95,9 @@ export function TransferCollectibleWindow(props: Props) {
               setTransferTo(ev.currentTarget['value'])
               setTransferState(null)
             }}
-            placeholder="0x123456789..."
-            size={42}
-            maxLength={45}
+            placeholder="Recipient SOL address (base58)..."
+            size={44}
+            maxLength={44}
             disabled={disabled}
           ></TextField>
           <NumberField name="Quantity" value={quantity} onChange={(ev: TargetedEvent<HTMLInputElement>) => setQuantity(parseInt(ev.currentTarget['value'], 10))} size={6} maxLength={5} min={1} max={balance} disabled={disabled}>

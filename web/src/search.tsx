@@ -1,8 +1,9 @@
-import { isAddress } from 'ethers'
 import { sortBy } from 'lodash'
 import { Component } from 'preact'
 import { route } from 'preact-router'
-import { ssrFriendlyWindow } from '../../common/helpers/utils'
+// SOLANA: was ethers `isAddress` (0x/ENS). Search treats a base58 pubkey/mint
+// as a wallet lookup; use the shared base58 validator.
+import { ssrFriendlyWindow, isSolanaAddress } from '../../common/helpers/utils'
 import Head from './components/head'
 import PaginationLinks from './components/pagination-links'
 import cachedFetch from './helpers/cached-fetch'
@@ -166,7 +167,9 @@ export default class Search extends Component<Props, State> {
   }
 
   componentWillMount() {
-    if (this.query && isAddress(this.query)) {
+    // SOLANA: if the query is a base58 wallet/mint pubkey, jump straight to the
+    // user profile. base58 is case-sensitive — do not normalize the query.
+    if (this.query && isSolanaAddress(this.query)) {
       route(`/u/${this.query}`, true)
     }
   }

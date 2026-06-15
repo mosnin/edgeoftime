@@ -1,40 +1,36 @@
 import { Component } from 'preact'
-import { Contract, isAddress } from 'ethers'
-import { SUPPORTED_CHAINS_BY_ID } from '../../common/helpers/chain-helpers'
-import { web3ExtractErrorMessage } from '../../common/helpers/utils'
-import { handleTransaction } from './helpers/transfer-collectible'
-import { provider } from './auth/state-login'
+// SOLANA: dropped ethers (Contract/isAddress) + EVM collections-factory ABI.
+// A collection on Solana is a Metaplex Certified Collection NFT, identified by
+// its base58 collection mint pubkey. Validate addresses with the shared
+// isSolanaAddress helper instead of EVM isAddress.
+import { isSolanaAddress, web3ExtractErrorMessage } from '../../common/helpers/utils'
+import { getActiveChain, activeCluster } from '../../common/helpers/solana-chain-helpers'
 import { app } from './state'
 import { fetchOptions } from './utils'
 
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const factoryAbi = require('../../common/contracts/collections-factory.json')
-
-const CHAINS = [{ id: '1', name: 'Ethereum' }, { id: '137', name: 'Polygon' }, ...(process.env.NODE_ENV === 'development' ? [{ id: '80001', name: 'Mumbai' }] : [])]
-
 interface State {
-  chainId: number | null
-  contractName: string
+  // SOLANA: replaced chainId/contractName(EVM) with a collection mint pubkey.
+  mint: string
+  collectionName: string
   accepted: boolean
   deploying: boolean
   error: string | null
   done: boolean
+  // SOLANA: stores the base58 collection mint once linked.
   address: string | null
   collectionId: number
-  collectionName: string
 }
 
 export default class PublishCollection extends Component<{ mint?: string }, State> {
   state: State = {
-    chainId: null,
-    contractName: '',
+    mint: '',
+    collectionName: '',
     accepted: false,
     deploying: false,
     error: null,
     done: false,
     address: null,
     collectionId: 0,
-    collectionName: '',
   }
 
   componentDidMount() {
@@ -44,109 +40,95 @@ export default class PublishCollection extends Component<{ mint?: string }, Stat
       .then((r) => r.json())
       .then((r) => {
         if (r.collection) {
-          this.setState({ collectionId: r.collection.id, contractName: r.collection.name, collectionName: r.collection.name })
+          this.setState({ collectionId: r.collection.id, collectionName: r.collection.name })
         }
       })
   }
 
+  // SOLANA: was an ethers contract deploy (factory.launchCollection) on
+  // ETH/Polygon. On Solana a collection is a Metaplex Certified Collection NFT.
+  // Two supported flows:
+  //   1) Link an existing collection mint (paste a base58 pubkey) — implemented.
+  //   2) Create a new collection mint on-chain — STUBBED (see SOLANA TODO).
   async deploy() {
     this.setState({ error: null })
-    const { chainId, contractName, accepted, collectionId } = this.state
+    const { mint, accepted, collectionId } = this.state
 
     if (!accepted) {
       this.setState({ error: 'Accept the terms first.' })
       return
     }
-    if (!chainId) {
-      this.setState({ error: 'Select a chain.' })
-      return
-    }
-    if (!contractName.trim()) {
-      this.setState({ error: 'Contract name required.' })
-      return
-    }
-    if (!provider.signer) {
-      this.setState({ error: 'Not signed in.' })
+    if (!app.state.wallet || !isSolanaAddress(app.state.wallet)) {
+      this.setState({ error: 'Connect a Solana wallet first.' })
       return
     }
 
-    const signerChain = await (provider.signer as any).getChainId()
-    if (signerChain != chainId) {
-      provider.switchNetwork(chainId)
-      this.setState({ error: 'Switch to the correct chain in your wallet, then try again.' })
-      return
-    }
+    let collectionMint = mint.trim()
 
-    const w3 = provider.ethersWeb3Provider()
-    const bal = w3 && app.state.wallet ? Number(await w3.getBalance(app.state.wallet)) / 1e18 : 0
-    if (bal <= 0.0001) {
-      this.setState({ error: `Insufficient ${chainId === 1 ? 'ETH' : 'MATIC'} balance.` })
+    if (collectionMint) {
+      // Flow 1: link an existing Metaplex collection mint.
+      if (!isSolanaAddress(collectionMint)) {
+        this.setState({ error: 'Enter a valid base58 collection mint address.' })
+        return
+      }
+    } else {
+      // Flow 2: create a brand-new collection mint on-chain.
+      // SOLANA TODO: create a Metaplex Certified Collection NFT (Token Metadata
+      // `createV1` with collectionDetails set, signed by the connected Phantom
+      // wallet) and use its mint pubkey as `collectionMint`. The minting logic
+      // lives in scripts/solana-mint-parcels.ts — reuse the collection-creation
+      // path from there (or expose a server endpoint that wraps it). Until that
+      // is wired, require the user to paste an existing mint.
+      this.setState({ error: 'On-chain collection creation is not available yet — paste an existing collection mint address.' })
       return
     }
 
     this.setState({ deploying: true })
-    const addr = chainId === 137 ? process.env.COLLECTION_FACTORY_CONTRACT_MATIC : process.env.COLLECTION_FACTORY_CONTRACT_ETH
-    const contract = new Contract(addr!, factoryAbi.abi, provider.getSigner())
 
-    let tx
+    // Persist the collection mint on the collection record (server validates
+    // and stores it as the collection's Solana mint / address).
+    let save: any
     try {
-      tx = await contract.launchCollection(collectionId, contractName, {})
+      save = await fetch(`/api/collections/${collectionId}/address`, {
+        ...fetchOptions(),
+        method: 'put',
+        headers: { 'Content-Type': 'application/json' },
+        // SOLANA: body now carries a base58 mint instead of a 0x contract address.
+        body: JSON.stringify({ address: collectionMint }),
+      }).then((r) => r.json())
     } catch (e: any) {
-      this.setState({ deploying: false, error: e.code === 4001 ? 'Transaction rejected.' : web3ExtractErrorMessage(e) || 'Deploy failed.' })
+      this.setState({ deploying: false, error: web3ExtractErrorMessage(e) || 'Failed to save collection mint.' })
       return
     }
 
-    let receipt: any
-    try {
-      receipt = await handleTransaction(tx)
-    } catch {
-      this.setState({ deploying: false, error: 'Transaction error.' })
+    if (!save?.success) {
+      this.setState({ deploying: false, error: save?.message || 'Failed to save collection mint.' })
       return
     }
 
-    let contractAddr: string | null = null
-    if (receipt?.events) {
-      const ev = receipt.events.find((e: any) => e.event === 'NewCollectionCreated')
-      if (ev && isAddress(ev.args[0])) contractAddr = ev.args[0]
-    }
-    if (!contractAddr && receipt?.logs?.[0]) contractAddr = receipt.logs[0].address
-    if (!contractAddr || !isAddress(contractAddr)) {
-      this.setState({ deploying: false, error: 'Could not get contract address.' })
-      return
-    }
-
-    const save = await fetch(`/api/collections/${collectionId}/address`, {
-      ...fetchOptions(),
-      method: 'put',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ address: contractAddr }),
-    }).then((r) => r.json())
-
-    if (!save.success) {
-      this.setState({ deploying: false, error: save.message || 'Deployed but failed to save address.' })
-      return
-    }
-
-    this.setState({ deploying: false, done: true, address: contractAddr })
+    this.setState({ deploying: false, done: true, address: collectionMint })
   }
 
   render() {
-    const { done, address, chainId, deploying, error, accepted, contractName, collectionName, collectionId } = this.state
+    const { done, address, deploying, error, accepted, mint, collectionName, collectionId } = this.state
 
     if (done) {
-      const explorer = chainId !== 1 ? `https://polygonscan.com/address/${address}` : `https://etherscan.io/address/${address}`
+      // SOLANA: link to Solana Explorer for the collection mint (cluster-aware).
+      const base = getActiveChain().explorerUrl
+      const sep = base.includes('?') ? '&' : '?'
+      const explorer = activeCluster === 'mainnet-beta' ? `${base}/address/${address}` : `${base}${sep}address=${address}`
       return (
         <section class="columns">
           <article>
             <hgroup>
               <h1>Published!</h1>
-              <p>Contract deployed for {collectionName}.</p>
+              <p>Collection mint linked for {collectionName}.</p>
             </hgroup>
             <p>
-              Address: <code>{address}</code>
+              Mint: <code>{address}</code>
             </p>
             <a href={explorer} target="_blank">
-              View on {chainId !== 1 ? 'Polygonscan' : 'Etherscan'}
+              View on Solana Explorer
             </a>
             <br />
             <br />
@@ -161,27 +143,16 @@ export default class PublishCollection extends Component<{ mint?: string }, Stat
         <article>
           <hgroup>
             <h1>Publish: {collectionName}</h1>
-            <p>Deploy a smart contract for this collection on-chain.</p>
+            {/* SOLANA: link a Metaplex collection mint instead of deploying an EVM contract. */}
+            <p>Link this collection to a Solana Metaplex collection (a collection mint address).</p>
           </hgroup>
-          <label>Chain</label>
-          <select
-            value={chainId ?? ''}
-            onChange={(e: any) => {
-              const v = parseInt(e.currentTarget.value)
-              this.setState({ chainId: v || null })
-              if (v) provider.switchNetwork(v)
-            }}
-          >
-            <option value="">Select chain</option>
-            {CHAINS.map((c) => (
-              <option value={c.id}>{c.name}</option>
-            ))}
-          </select>
 
           <label>
-            Contract name <small>(permanent, max 20 chars)</small>
+            Collection mint <small>(base58 pubkey)</small>
           </label>
-          <input type="text" maxLength={20} value={contractName} onInput={(e: any) => this.setState({ contractName: e.target.value })} />
+          {/* SOLANA: paste an existing Metaplex collection mint. Leaving this empty
+              would trigger on-chain creation, which is stubbed for now. */}
+          <input type="text" value={mint} placeholder="e.g. 4k3Dyjzvzp8e..." onInput={(e: any) => this.setState({ mint: e.target.value })} />
 
           <label>
             <input type="checkbox" checked={accepted} onClick={(e: any) => this.setState({ accepted: e.currentTarget.checked })} /> I own or have rights to this collection and agree to the <a href="/terms">terms</a>
@@ -189,8 +160,8 @@ export default class PublishCollection extends Component<{ mint?: string }, Stat
 
           {error && <p style="color:red">{error}</p>}
 
-          <button disabled={deploying || !accepted || !chainId || !contractName.trim()} onClick={() => this.deploy()}>
-            {deploying ? 'Deploying...' : 'Deploy'}
+          <button disabled={deploying || !accepted} onClick={() => this.deploy()}>
+            {deploying ? 'Linking...' : 'Link collection'}
           </button>
         </article>
       </section>

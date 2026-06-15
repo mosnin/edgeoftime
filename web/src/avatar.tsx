@@ -49,7 +49,7 @@ export default class Avatar extends Component<Props, State> {
     this.setState({ loading: true })
     let url
     const avatar: Partial<ApiAvatar> = {}
-    if (this.props.walletOrName && isAddress(this.props.walletOrName)) {
+    if (this.props.walletOrName && isSolanaAddress(this.props.walletOrName)) {
       url = `${process.env.API}/avatars/${this.props.walletOrName}.json`
       avatar.owner = this.props.walletOrName
     } else {
@@ -84,9 +84,15 @@ export default class Avatar extends Component<Props, State> {
     }
 
     const avatar = this.state.avatar
-    const isOwner = this.wallet?.toLowerCase() === app.state?.wallet?.toLowerCase()
+    // SOLANA: base58 pubkeys are case-sensitive — compare verbatim, never lowercase.
+    const isOwner = !!this.wallet && this.wallet === app.state?.wallet
 
-    const title = avatar?.name || avatar?.owner
+    // SOLANA: ENS/0x display had no analogue — show a truncated base58 pubkey.
+    // SOLANA TODO: resolve SNS (.sol) names for a friendlier display when available.
+    const owner = avatar?.owner
+    const shortOwner = owner && isSolanaAddress(owner) ? `${owner.slice(0, 4)}…${owner.slice(-4)}` : owner
+
+    const title = avatar?.name || shortOwner
     const description = avatar?.description || `Check out the avatar for ${title}`
 
     return <Profile walletOrUUId={this.wallet ?? ''} isOwner={isOwner} tab={this.props.tab} />

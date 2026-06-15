@@ -1,17 +1,19 @@
 import { Component, render } from 'preact'
 import Panel, { PanelType } from '../components/panel'
-import { unmountComponentAtNode, useEffect, useState } from 'preact/compat'
+import { unmountComponentAtNode, useState } from 'preact/compat'
 import { ParcelSettings, SingleParcelRecord, tokensToEnter } from '../../../common/messages/parcel'
-import { AlchemyNFTWithMetadata } from '../../../common/messages/api-alchemy'
-import { fetchMetadataViaAlchemy, typeOfContract } from '../../../common/helpers/apis'
 import { AssetType, saveAsset } from '../helpers/save-helper'
 import { app } from '../state'
-import { md5 } from '../../../common/helpers/utils'
-
-import { loadingBox } from '../components/loading-icon'
-import { isAddress } from 'ethers'
+import { isSolanaAddress, md5 } from '../../../common/helpers/utils'
+import { getActiveChain } from '../../../common/helpers/solana-chain-helpers'
 
 const stableHash = md5
+
+// SOLANA: token-gating types map to Solana mints.
+//   - 'spl'        -> hold >= some balance of an SPL token mint
+//   - 'nft'        -> hold a specific Metaplex NFT mint
+//   - 'collection' -> hold any NFT verified under a collection mint (DAS)
+type SolanaTokenType = 'spl' | 'nft' | 'collection'
 
 export interface Props {
   parcel: SingleParcelRecord
@@ -67,7 +69,8 @@ export class NFTGatingSettingsWindow extends Component<Props, State> {
   }
 
   addNftInput = () => {
-    const newToken = { address: '0x' + Math.floor(Math.random() * 100), chain: 1 }
+    // SOLANA: new gate defaults to an empty SPL mint on the active cluster.
+    const newToken = { address: '', type: 'nft' as SolanaTokenType, chain: getActiveChain().cluster, tokenId: undefined }
     ;(newToken as any).hash = hashNFT(newToken as any)
     this.setState({ tokensToEnter: [...this.state.tokensToEnter, newToken as any] })
   }
@@ -141,21 +144,21 @@ export class NFTGatingSettingsWindow extends Component<Props, State> {
     return (
       <div className={`OverlayWindow -auto-height -fixed`}>
         <header>
-          <h3>Limit entry to NFT holders.</h3>
+          <h3>Limit entry to token holders.</h3>
           <button onClick={this.props.onClose}>&times;</button>
         </header>
         <section>
           <div>
-            <p>This tool lets you block users from entering your parcel if they do not own certain NFTs.</p>
+            <p>This tool lets you block users from entering your parcel if they do not hold certain Solana tokens or NFTs.</p>
             <Panel>This feature is currently in Beta.</Panel>
             {!!error && <Panel type="danger">{error}</Panel>}
             {success && <Panel type="success">Settings Saved!</Panel>}
-            <b>Add/Remove NFTs:</b>
+            <b>Add/Remove tokens:</b>
             <ul>{nftsViews}</ul>
           </div>
           {tokensToEnter.length < 1 && (
             <div>
-              <button onClick={() => this.addNftInput()}>Add NFT</button>
+              <button onClick={() => this.addNftInput()}>Add token</button>
             </div>
           )}
         </section>
@@ -166,116 +169,75 @@ export class NFTGatingSettingsWindow extends Component<Props, State> {
 
 type TokenToEnterProps = idTokenToEnter & { onSubmit: (nft: idTokenToEnter) => void; onRemoveToken: (hash: string) => void }
 
-const TokenToEnterView = ({ address, chain, type, tokenId, hash, onSubmit, onRemoveToken }: TokenToEnterProps) => {
+// SOLANA: the gate editor. `address` is a base58 Metaplex/SPL mint validated
+// with isSolanaAddress; the chain selector picks a Solana cluster.
+const TokenToEnterView = ({ address, chain, type, hash, onSubmit, onRemoveToken }: TokenToEnterProps) => {
   const [contract, setContract] = useState<string | undefined>(address || undefined)
-  const [chainId, setChain] = useState<1 | 137>((chain || 1) as 1 | 137)
-  const [id, setId] = useState<string | undefined>(tokenId || undefined)
-  const [ercTypeOfContract, setTypeOfContract] = useState<'erc721' | 'erc1155' | 'erc20' | null>(type || null)
-  const [metadata, setMetadata] = useState<(AlchemyNFTWithMetadata & { success: boolean }) | null>(null)
+  const [cluster, setCluster] = useState<string>((chain as string) || getActiveChain().cluster)
+  const [tokenType, setTokenType] = useState<SolanaTokenType>((type as SolanaTokenType) || 'nft')
   // States:
   const [error, setError] = useState<string | null>(null)
-  const [fetchingType, setFetchingType] = useState<boolean>(false)
 
-  const getMetadata = async () => {
-    if (!contract) {
-      return
-    }
-    const p = await fetchMetadataViaAlchemy({ address: contract, chain: chainId, tokenId: id })
-    if (p?.success && p?.metadata) {
-      setMetadata(p)
-    }
-  }
-  const getContractType = async () => {
-    if (!contract) {
-      return
-    }
-    setFetchingType(true)
-    const p = await typeOfContract(contract, chainId == 1 ? 'eth' : 'matic')
-    setTypeOfContract(p)
-    setFetchingType(false)
-  }
-
-  const name = () => {
-    if (!id) {
-      return ''
-    }
-    return metadata?.metadata.name || `Token id ${id.length > 8 ? id?.substring(0, 8) + '...' : id}`
-  }
-
-  const image = () => {
-    let image = metadata?.metadata.image || metadata?.metadata.image_url || '/images/no-image.png'
-
-    if (image.startsWith('ipfs://')) {
-      const params = image.split('/')
-      params.splice(0, 2)
-      image = 'https://ipfs.io/ipfs/' + params.join('/')
-    }
-    return image
-  }
-
-  const website = () => {
-    return metadata?.metadata.external_url || metadata?.metadata.url
-  }
+  // SOLANA TODO: fetch on-chain metadata (name/image) for the entered mint via
+  // the DAS API (getActiveChain().rpcUrl getAsset) to preview the gated token.
 
   const validation = () => {
-    if (!chainId) {
-      setError('Chain is invalid')
+    if (!cluster) {
+      setError('Cluster is invalid')
       return false
     }
-    if (!contract || !isAddress(contract)) {
-      setError('Contract is invalid')
+    if (!contract || !isSolanaAddress(contract)) {
+      setError('Mint address is invalid (expected a base58 Solana mint)')
       return false
     }
-    switch (ercTypeOfContract) {
-      case 'erc1155':
-        if (!id) {
-          setError('ERC1155 contract: TokenId is required')
-          return false
-        }
-        break
-      case null:
-        setError('Type of contract is unknown')
-        return false
-      case 'erc20':
-        setId(undefined)
-        break
-      case 'erc721':
-        break
-      default:
-        break
+    if (!tokenType) {
+      setError('Token type is required')
+      return false
     }
+    setError(null)
     // save new setting
     return true
   }
-  useEffect(() => {
-    id && getMetadata()
-  }, [])
-
-  useEffect(() => {
-    if (id && contract && chainId) {
-      getMetadata()
-    }
-  }, [id, contract])
-
-  useEffect(() => {
-    if (contract && isAddress(contract)) {
-      getContractType()
-    }
-  }, [contract, chainId])
 
   const submitToken = (evt: any) => {
     evt.preventDefault()
     if (!validation()) return
-    onSubmit({ hash, address: contract as string, chain: chainId, tokenId: id, type: ercTypeOfContract as any })
+    // SOLANA: persist shape consistent with SolanaTokenToEnter (type/address).
+    onSubmit({ hash, address: contract as string, chain: cluster, type: tokenType as any, tokenId: undefined } as any)
   }
 
   const removeToken = () => {
     if (!confirm('Are you sure you want to remove this token?')) return
     if (!hash) {
-      app.showSnackbar('This NFT is broken, try reloading the page')
+      app.showSnackbar('This token is broken, try reloading the page')
       return
     }
     onRemoveToken(hash)
+  }
+
+  const conditionLabel = () => {
+    if (!contract) return null
+    const short = contract.length > 15 ? contract.substring(0, 15) + '...' : contract
+    switch (tokenType) {
+      case 'spl':
+        return (
+          <p>
+            User has to hold the SPL token <b>{short}</b>
+          </p>
+        )
+      case 'nft':
+        return (
+          <p>
+            User has to hold the NFT <b>{short}</b>
+          </p>
+        )
+      case 'collection':
+        return (
+          <p>
+            User has to hold <b>any NFT</b> from collection {short}
+          </p>
+        )
+    }
   }
 
   return (
@@ -283,85 +245,36 @@ const TokenToEnterView = ({ address, chain, type, tokenId, hash, onSubmit, onRem
       {error && <Panel type="danger">{error}</Panel>}
       <form>
         <div>
-          <label>Chain</label>
-          <select value={chainId} onChange={(e) => setChain(parseInt(e.currentTarget.value) as 1 | 137)} required>
-            <option value={1}>Ethereum</option>
-            <option value={137}>Polygon</option>
+          <label>Cluster</label>
+          <select value={cluster} onChange={(e) => setCluster(e.currentTarget.value)} required>
+            <option value={'mainnet-beta'}>Solana Mainnet</option>
+            <option value={'devnet'}>Solana Devnet</option>
           </select>
         </div>
         <div>
-          <label>Contract address</label>
-          <input type="text" onChange={(e) => setContract(e.currentTarget.value)} placeholder="0xdwd15..." required value={contract} />
+          <label>Type</label>
+          <select value={tokenType} onChange={(e) => setTokenType(e.currentTarget.value as SolanaTokenType)} required>
+            <option value={'nft'}>NFT (specific mint)</option>
+            <option value={'collection'}>Collection (any NFT in collection)</option>
+            <option value={'spl'}>SPL token</option>
+          </select>
         </div>
         <div>
-          <label>Type</label>
-          {fetchingType && <span>Checking contract type ... </span>}
-          {!fetchingType && (
-            <select value={ercTypeOfContract as any} disabled={true} required>
-              <option value={null!}></option>
-              <option value={'erc721'}>ERC721</option>
-              <option value={'erc1155'}>ERC1155</option>
-              <option value={'erc20'}>ERC20</option>
-            </select>
-          )}
+          <label>Mint address</label>
+          <input type="text" onChange={(e) => setContract(e.currentTarget.value)} placeholder="Base58 mint, e.g. So1111..." required value={contract} />
         </div>
-        {ercTypeOfContract !== 'erc20' && (
-          <div>
-            <label>Token Id</label>
-            <input
-              type="text"
-              onInput={(e) => {
-                !e.currentTarget.value ? setId(e.currentTarget.value) : !!e.currentTarget.value.match(/^[0-9]*$/g) && setId(e.currentTarget.value)
-              }}
-              value={id}
-            />
-          </div>
-        )}
         <div>
           <button onClick={submitToken}>Submit</button>
           <button onClick={removeToken}>Remove</button>
         </div>
       </form>
-      {contract && chainId && ercTypeOfContract && id && metadata ? (
-        <div>
-          <b>NFT view:</b>
-          <br />
-
-          {!fetchingType && <img src={image()} width={48} />}
-          <div id="description">
-            <p>
-              User has to own <b>{name()}</b> from Collection {contract.substring(0, 15) + '...'}
-            </p>
-            {website() && (
-              <button
-                onClick={() => {
-                  window.open(website(), '_blank')
-                }}
-                title={!!website() ? `View on Website` : 'No Link found for this item'}
-              >
-                View item
-              </button>
-            )}
-          </div>
+      <div>
+        <b>Gate view:</b>
+        <br />
+        <div id="description">
+          {contract && isSolanaAddress(contract) ? conditionLabel() : <p>Once you've added a valid Solana mint we'll show what the condition is.</p>}
         </div>
-      ) : contract && chainId && ercTypeOfContract && !id ? (
-        <div>
-          <b>NFT view:</b>
-          <br />
-          <div id="description">
-            <p>
-              User has to own <b>any NFT</b> from Collection {contract.substring(0, 15) + '...'}
-            </p>
-          </div>
-        </div>
-      ) : (
-        <div>
-          <b>NFT view:</b>
-          <br />
-          {fetchingType && loadingBox(48)}
-          <p>Once you've added enough information we'll show what the condition is.</p>
-        </div>
-      )}
+      </div>
     </li>
   )
 }

@@ -3,9 +3,10 @@ import pluralize from 'pluralize'
 import { Component, Fragment } from 'preact'
 import { SUPPORTED_CHAINS_BY_ID } from '../../common/helpers/chain-helpers'
 import { Collection, CollectionHelper } from '../../common/helpers/collections-helpers'
-import { ssrFriendlyDocument } from '../../common/helpers/utils'
+// SOLANA: was ethers `isAddress` (0x hex). A wallet on Solana is a base58
+// pubkey; use the shared base58 validator instead.
+import { ssrFriendlyDocument, isSolanaAddress } from '../../common/helpers/utils'
 import { CollectibleInfoRecord } from '../../common/messages/feature'
-import { isAddress } from 'ethers'
 import { bucketUrl, renderUrl } from './assets'
 import Image from './components/image'
 import Pagination from './components/pagination'
@@ -57,7 +58,8 @@ export default class CollectionPage extends Component<Props, State> {
 
   private get isQueryAUser() {
     const q = this.query
-    return !!isAddress(q!)
+    // SOLANA: a "user" query is a base58 wallet pubkey, not a 0x address.
+    return isSolanaAddress(q)
   }
 
   private get numberOfCollectibles() {
@@ -145,7 +147,8 @@ export default class CollectionPage extends Component<Props, State> {
         </article>
 
         <aside>
-          {(app.isAdmin() || this.state.collection.owner?.toLowerCase() === app.wallet?.toLowerCase()) && <a href={`/collections/${this.props.id}/edit`}>Edit</a>}
+          {/* SOLANA: base58 pubkeys are case-sensitive — compare directly, never .toLowerCase(). */}
+          {(app.isAdmin() || (!!app.wallet && this.state.collection.owner === app.wallet)) && <a href={`/collections/${this.props.id}/edit`}>Edit</a>}
           {empty ? null : upload}
 
           <p class="description">{this.state.collection.description}</p>

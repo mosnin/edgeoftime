@@ -2,7 +2,9 @@ import { Component, createRef, Fragment } from 'preact'
 import { ParcelMetaCodec, type ParcelMeta } from '../../../common/types'
 import ndarray, { NdArray } from 'ndarray'
 import * as t from 'io-ts'
-import { ethers } from 'ethers'
+// SOLANA: dropped ethers. Parcel minting is now a Metaplex NFT mint (stubbed
+// below); address validation uses the shared base58 helper.
+import { isSolanaAddress } from '../../../common/helpers/utils'
 import { contours } from 'd3-contour'
 
 const L = window.L as typeof window.L
@@ -21,7 +23,7 @@ BABYLON.Effect.ShadersStore['aoMeshPixelShader'] = aoMeshPixelShader
 import mesher from '../../../common/voxels/mesher'
 import { defaultColors } from '../../../common/content/blocks'
 import { getVoxelsFromBuffer } from '../../../common/voxels/helpers'
-import PARCEL_CONTRACT_ABI from '../../../common/contracts/parcel.json'
+// SOLANA: removed EVM parcel contract ABI (common/contracts/parcel.json).
 import { debounce } from 'lodash'
 import { app } from '../state'
 

@@ -1,8 +1,8 @@
-import { formatEther, isAddress } from 'ethers'
 import { debounce, truncate } from 'lodash'
-import pluralize from 'pluralize'
 import { Component } from 'preact'
-import { SUPPORTED_CHAINS_BY_ID } from '../../../common/helpers/chain-helpers'
+// SOLANA: drop ethers + Ethereum chain map. Collection routes are keyed by the
+// active Solana cluster, and asset data comes from the DAS API.
+import { getActiveChain } from '../../../common/helpers/solana-chain-helpers'
 import { Collection, CollectionHelper } from '../../../common/helpers/collections-helpers'
 import { ssrFriendlyDocument } from '../../../common/helpers/utils'
 import { CollectibleInfoRecord } from '../../../common/messages/feature'
@@ -36,28 +36,8 @@ export interface State {
 
 const NUM_PER_PAGE = 40
 
-/* todo move into utils */
-const priceFormat = (i: number) => (isFinite(i) ? `${i.toFixed(2)}Eth` : `${i}`)
-const regex = /[\d\.]+[eE][\+\-]?\d+/
-const convertENotationString = (str: string): string => {
-  if (regex.test(str)) {
-    const [lead, decimal, pow] = str.split(/\.|e\+/)
-    const zeros = '0'.repeat(Number.parseInt(pow) - (decimal ? decimal.length : 0))
-
-    return lead + (decimal || '') + zeros
-  }
-  return str
-}
-const parseEther = (str: string): number => {
-  try {
-    const eth = formatEther(convertENotationString(str))
-    return parseFloat(eth)
-  } catch (err) {
-    console.error(err)
-    return NaN
-  }
-}
-/* end todo */
+// SOLANA: removed Ethereum price/parseEther helpers (formatEther). Collectibles
+// on Solana are Metaplex NFTs fetched via DAS; pricing is not shown here.
 
 export default class CollectiblesComponent extends Component<Props, State> {
   throttledSearch = debounce(

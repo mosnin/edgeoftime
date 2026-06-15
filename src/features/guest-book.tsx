@@ -1,4 +1,6 @@
-import { ethers, verifyMessage } from 'ethers'
+// SOLANA: dropped ethers/verifyMessage; guestbook signing/verification moves to
+// ed25519 (Phantom) signatures over base58 pubkeys instead of EIP-191 recovery.
+import { isSolanaAddress } from '../../common/helpers/utils'
 import Config from '../../common/config'
 import { GuestBookRecord } from '../../common/messages/feature'
 import { voxImporter } from '../../common/vox-import/vox-import'
@@ -18,19 +20,11 @@ export async function signMessage(wallet: string, message: string): Promise<stri
     throw new Error('No provider available')
   }
 
-  let signature: string | null
-
-  try {
-    signature = (await currentProvider.request({ method: 'personal_sign', params: [message, wallet] })) as any
-  } catch (e) {
-    // User refused to sign.
-    console.error(e)
-    signature = null
-  }
-  if (signature == '0x') {
-    signature = null
-  }
-  return signature
+  // SOLANA TODO: sign `message` with the connected Solana wallet adapter (Phantom)
+  // via signMessage() over the UTF-8 bytes, returning the base58 ed25519 signature.
+  // The EVM `personal_sign` (EIP-191) flow has been removed.
+  console.warn('guest-book signMessage: Solana wallet signing not implemented yet')
+  return null
 }
 
 interface GuestBookSharedState {
@@ -98,7 +92,14 @@ export default class GuestBook extends Feature3D<GuestBookRecord> {
 
   verifySignature(wallet: string, signature: string | undefined) {
     if (!signature) return false
-    return verifyMessage(this.signatureMessage, ethers.Signature.from(signature)).toLowerCase() === wallet.toLowerCase()
+    // SOLANA: there is no address "recovery" like EIP-191 — an ed25519 signature is
+    // verified against the claimed base58 pubkey. base58 is case-sensitive, so never
+    // .toLowerCase() a wallet. Client-side we sanity-check the wallet is a valid
+    // pubkey; authoritative ed25519 verification is verifySolanaSignature() on the server.
+    if (!isSolanaAddress(wallet)) return false
+    // SOLANA TODO: verify `signature` (base58 ed25519) against `this.signatureMessage`
+    // and `wallet` using tweetnacl (nacl.sign.detached.verify) once client signing lands.
+    return false
   }
 
   receiveState(state: GuestBookSharedState) {
