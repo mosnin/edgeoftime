@@ -1,8 +1,9 @@
-import * as ethers from 'ethers'
 import { useEffect, useState } from 'preact/hooks'
 import { format } from 'timeago.js'
 import { fetchUsersCollectibles } from '../../../../common/helpers/collections-helpers'
-import { copyTextToClipboard } from '../../../../common/helpers/utils'
+// SOLANA: validate the owner as a base58 pubkey instead of ethers.getAddress.
+import { copyTextToClipboard, isSolanaAddress } from '../../../../common/helpers/utils'
+import { getActiveChain } from '../../../../common/helpers/solana-chain-helpers'
 import { ApiAvatar } from '../../../../common/messages/api-avatars'
 import { Costume } from '../../../../common/types'
 import { ethTrunc } from '../../../../common/utils'

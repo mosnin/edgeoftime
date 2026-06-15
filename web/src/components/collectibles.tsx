@@ -177,7 +177,10 @@ export default class CollectiblesComponent extends Component<Props, State> {
     const collectibles =
       hasCollectibles &&
       this.state.collectibles?.map((w: any) => {
-        const url = `/collections/${SUPPORTED_CHAINS_BY_ID[w.chain_id]}/${w.collection_address}/${w.token_id}`
+        // SOLANA: route keyed by active cluster; collection_address / token_id
+        // are now the base58 collection mint and asset mint from DAS.
+        const cluster = getActiveChain().cluster
+        const url = `/collections/${cluster}/${w.collection_address}/${w.token_id}`
         return (
           <div key={w.id}>
             <a href={url}>

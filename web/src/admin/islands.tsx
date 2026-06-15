@@ -527,7 +527,11 @@ export default class IslandsAdmin extends Component<Props, State> {
     const z2 = parcel.z2 * scale + this.state.center[1]
 
     const island = this.state.name
-    const owner = app.state.wallet || '0x2D891ED45C4C3EAB978513DF4B92a35Cf131d2e2'
+    // SOLANA: parcels ship UNOWNED ('') until minted + claimed as a Metaplex NFT.
+    // Use the connected base58 wallet only if valid; otherwise leave unowned —
+    // never fall back to a hard-coded 0x address.
+    const wallet = app.state.wallet
+    const owner = wallet && isSolanaAddress(wallet) ? wallet : ''
 
     const response = await fetch('/api/admin/parcels/create', {
       method: 'POST',
