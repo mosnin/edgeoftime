@@ -1,59 +1,23 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Edge of Time — Voxel Robot Sandbox</title>
-  <link rel="stylesheet" href="./style.css" />
-  <!-- Three.js loaded as an ES module via import map (no build step / install required) -->
-  <script type="importmap">
-  {
-    "imports": {
-      "three": "https://unpkg.com/three@0.160.0/build/three.module.js"
-    }
-  }
-  </script>
-</head>
-<body>
-  <canvas id="game"></canvas>
-
-  <!-- Crosshair -->
-  <div id="crosshair">+</div>
-
-  <!-- Heads-up display -->
-  <div id="hud">
-    <div id="hud-map">SPACE</div>
-    <div id="hud-coords">x 0  y 0  z 0</div>
-    <div id="hud-mode">Flight: FREE</div>
-  </div>
-
-  <!-- Hotbar -->
-  <div id="hotbar"></div>
-
-  <!-- Context hint (e.g. "Press F to land") -->
-  <div id="hint"></div>
-
-  <!-- Start / pause overlay -->
-  <div id="overlay">
-    <div class="panel">
-      <h1>EDGE&nbsp;OF&nbsp;TIME</h1>
-      <p class="tag">A voxel robot sandbox among the planets.</p>
-      <div class="controls">
-        <div><b>Move</b><span>W A S D</span></div>
-        <div><b>Look</b><span>Mouse</span></div>
-        <div><b>Jetpack up / ascend</b><span>Space</span></div>
-        <div><b>Descend</b><span>Shift</span></div>
-        <div><b>Boost</b><span>Ctrl</span></div>
-        <div><b>Break block</b><span>Left click</span></div>
-        <div><b>Place block</b><span>Right click</span></div>
-        <div><b>Select block</b><span>1 – 9 / scroll</span></div>
-        <div><b>Land / take off</b><span>F</span></div>
-      </div>
-      <button id="play">CLICK TO PLAY</button>
-      <p class="small">Fly to a planet and press <b>F</b> to land and start building.</p>
-    </div>
-  </div>
-
-  <script type="module" src="./src/main.js"></script>
-</body>
+<!doctype html>
+<html lang="en" dir="ltr">
+  <head>
+    <title>budo</title>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="user-scalable=no, width=device-width, initial-scale=1.0" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <style>
+      .perfmon {
+        position: absolute;
+        top: 5px;
+        left: 5px;
+        z-index: 10000;
+        font-family: 'Source Code Pro', monospace;
+      }
+    </style>
+  </head>
+  <body>
+    <script type="text/javascript" src="/budo/livereload.js" async="" defer=""></script>
+    <script src="index.ts"></script>
+  </body>
 </html>

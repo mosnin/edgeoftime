@@ -1,92 +1,40 @@
-# Edge of Time
+# Retro Voxels
 
-A **browser voxel sandbox** where you play a jetpack-equipped robot. Fly through a
-solar system, pick a planet, land on it, and build on its Minecraft-style voxel
-surface. Space and each planet are **separate maps** that load on demand and
-dispose their GPU resources on exit, so rendering stays smooth.
+This is the live code to retro.voxels.com. PRs are welcome. Read agents.md for coding
+guidelines.
 
-Built with [Three.js](https://threejs.org/) — **no build step, no install** to
-play. Just serve the folder and open it.
+# Getting started
 
-## Play
+[![Open in GitHub Codespaces](https://img.shields.io/badge/Open_in-GitHub_Codespaces-238636?style=for-the-badge&logo=github&logoColor=white)](https://codespaces.new/cryptovoxels/retro)
 
-ES modules + the import map require an HTTP server (opening `index.html` directly
-via `file://` will not work).
+* `pnpm install`
+* `cat db/import.sql.gz | gunzip | psql voxels`
+* `pnpm run dev`
+* Open port 9000
 
-```bash
-npm start          # python3 -m http.server 8000
-# then open http://localhost:8000
-```
+# Installing locally
 
-Click **PLAY** to lock the mouse and begin.
+* Clone repo
+* Install postgres@18 and node@24 and pnpm
+* `createdb voxels && psql voxels < db/import.sql`
+* `pnpm install`
+* `pnpm run dev`
 
-### Controls
+(Only *nix environments are supported, PC users install [WSL](https://learn.microsoft.com/en-au/windows/wsl/install))
 
-| Action | Key |
-| --- | --- |
-| Move | `W` `A` `S` `D` |
-| Look | Mouse |
-| Jetpack up / ascend | `Space` |
-| Descend | `Shift` |
-| Boost | `Ctrl` |
-| Break block | Left click |
-| Place block | Right click |
-| Select block | `1`–`9` / scroll wheel |
-| Land on planet / take off | `F` |
+# Infrastructure
 
-Fly close to a planet in space and press **F** to land. On a planet, fly high and
-press **F** to return to space.
+Thie app is deployed to digitalocean app platform from `main` at https://retro.voxels.com
 
-## Architecture
+# Operations
 
-The codebase is split into independent modules with fixed interfaces documented in
-[`CONTRACTS.md`](./CONTRACTS.md) — the single source of truth used to build the
-project in parallel.
+PRs are reviewed by @bnolan and if merged will be deployed to production.
 
-```
-index.html / style.css      Entry point, import map, HUD DOM
-src/main.js                 Engine: renderer, camera, RAF loop, services wiring
-src/core/MapManager.js      Map registry + faded transitions
-src/core/Input.js           Keyboard / mouse-look / pointer lock
-src/core/HUD.js             Overlay, hotbar, coords, hints
-src/core/Effects.js         Jetpack particles + WebAudio thruster
-src/maps/SolarSystem.js     Planet descriptors, sun & starfield builders
-src/maps/SpaceMap.js        6DOF flight through the solar system
-src/maps/PlanetMap.js       Voxel surface: gravity + jetpack + building
-src/voxel/blocks.js         Block registry
-src/voxel/Chunk.js          Chunk storage + face-culled meshing
-src/voxel/World.js          Chunk streaming, raycast, edits
-src/voxel/TerrainGenerator.js  Seeded Perlin terrain + trees per biome
-src/player/Robot.js         Robot model + transform + camera rig
-src/player/Physics.js       Voxel AABB collision (substepped)
-src/player/Building.js      Place / break / highlight / hotbar
-src/util/noise.js           Seedable Perlin / fBm noise
-```
+# License
 
-### Performance / anti-lag design
+This project is licensed under the [Business Source License 1.1 (BSL 1.1)](LICENSE). Please read the
+license carefully. This is not an OSI compatible license.
 
-- **Chunked world** (16×64×16) with **face-culled meshing** — only block faces
-  exposed to air/transparent neighbours are emitted.
-- **Radius-based streaming**: chunks load within a radius of the player and unload
-  (geometry disposed) beyond it.
-- **Per-frame work budget**: at most ~2 chunks generated and ~4 remeshed per frame
-  so movement never stalls the main thread.
-- **Fog** on planets hides chunk pop-in at the load boundary.
-- **Map switching** disposes the previous map's GPU resources, so space and planet
-  scenes never compete for memory.
+### Contributor Agreement
 
-## Tests
-
-Headless runtime tests (no browser needed) cover the world, terrain, physics,
-raycasting, and scene construction:
-
-```bash
-npm install        # installs three locally for tests only
-npm test
-```
-
-## Status
-
-This is a playable **vertical slice**: flight, the solar system, landing, voxel
-terrain, and build/break all work end to end. Natural next steps: multiplayer,
-world persistence, inventory, more biomes/structures, and day/night.
+By contributing to this repository, you agree that your contributions (commits) are licensed under this Business Source License 1.1, including the rolling transition to the MIT License three years after the date of your commit.

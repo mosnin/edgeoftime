@@ -1,0 +1,155 @@
+import { Express, NextFunction, Request, RequestHandler, Response } from 'express'
+import { PassportStatic } from 'passport'
+import cache, { noCache } from '../cache'
+import Collection from '../collection'
+import { createRequestHandlerForQuery } from '../lib/query-helpers'
+import { countNftsFromCollection, isSolanaAddress } from '../lib/solana-helpers' // SOLANA: validate Metaplex collection mints + enumerate holder NFTs via DAS
+import { Db, pgp } from '../pg'
+import { VoxelsUserRequest } from '../user'
+
+export default function (db: Db, passport: PassportStatic, app: Express) {
+  /* Collections */
+  app.get('/api/collections', cache('5 seconds'), async (req, res) => {
+    if (!req.query) {
+      return
+    }
+
+    const search = `%${req.query.q || ''}%`
+    const sortBy = req.query.sort || 'popular'
+    const limit = parseInt(req.query.limit as string) || 15
+    const page = parseInt(req.query.page as string) || 0
+    const owner = typeof req.query.owner === 'string' ? req.query.owner : null
+
+    let orderBy = 'count(w.id) desc' // default for 'popular'
+
+    if (sortBy === 'newest') {
+      orderBy = 'c.created_at desc'
+    } else if (sortBy === 'oldest') {
+      orderBy = 'c.created_at asc'
+    }
+
+    const results = await pgp.any(
+      `
+        select
+          c.id,
+          c.name,
+          c.description,
+          c.image_url,
+          c.owner,
+          c.address,
+          c.slug,
+          c.type,
+          c.chainid,
+          c.settings,
+          c.suppressed,
+          c.rejected_at,
+          c.created_at,
+          count(w.id) as total_wearables
+        from
+          collections c
+        left join
+          wearables w on w.collection_id = c.id
+        where
+          c.name ilike $<search>
+          ${owner ? 'and c.owner = $<owner>' : ''}
+        group by
+          c.id
+        order by
+          ${orderBy}
+        limit
+          coalesce($<limit>, 15)
+        offset
+          $<page> * coalesce($<limit>, 15)
+        `,
+      {
+        search,
+        limit,
+        page,
+        owner,
+      },
+    )
+
+    res.json({ success: true, collections: results })
+  })
+
+  app.get(
+    '/api/collections/:id',
+    cache('5 seconds'),
+    createRequestHandlerForQuery(db, 'collections/get-collection', 'collection', (req) => [req.params.id]),
+  )
+
+  app.get(
+    '/api/collections/:id/collectibles',
+    cache('5 seconds'),
+    createRequestHandlerForQuery(db, 'collectibles/get-collectibles-by-collection', 'collectibles', (req) => [req.params.id]),
+  )
+
+  /** Empty collection for bulk .vox upload; wearables added per /api/assets/upload with collection_id. */
+  app.post('/api/collections/create', passport.authenticate('jwt', { session: false }), async (req: VoxelsUserRequest, res) => {
+    const wallet = req.user?.wallet
+    if (!wallet) {
+      res.status(403).json({ success: false, message: 'Not signed in' })
+      return
+    }
+
+    const name = req.body?.name
+    const trimmed = typeof name === 'string' ? name.trim() : ''
+    if (!trimmed) {
+      res.status(400).json({ success: false, message: 'Name required' })
+      return
+    }
+
+    try {
+      const desc = typeof req.body?.description === 'string' ? req.body.description.trim() : ''
+      var insertRes = await db.query('sql/create-collection', `insert into collections (name, description, owner) values ($1, $2, $3) returning id, chainid, slug`, [trimmed, desc, wallet])
+    } catch (e) {
+      res.status(500).json({ success: false })
+      return
+    }
+
+    const row = insertRes.rows[0] as { id: number; chainid: number | null; slug: string | null } | undefined
+    if (!row?.id) {
+      res.status(500).json({ success: false, message: 'Could not create collection' })
+      return
+    }
+    const id = row.id as number
+    res.json({ success: true, collection_id: id })
+  })
+
+  app.put('/api/collections/:id/address', passport.authenticate('jwt', { session: false }), async (req: VoxelsUserRequest, res) => {
+    const wallet = req.user?.wallet
+    const id = parseInt(req.params.id, 10)
+    const address = req.body?.address
+    // SOLANA: the collection "address" is now a Metaplex collection mint pubkey (base58),
+    // not an EVM 0x address — validate with isSolanaAddress. Do NOT lowercase: base58 is case-sensitive.
+    if (!wallet || isNaN(id) || !address || !isSolanaAddress(address)) {
+      res.status(400).json({ success: false, message: 'Invalid params' })
+      return
+    }
+    try {
+      const r = await pgp.oneOrNone(`update collections set address = $1 where id = $2 and owner = $3 and address is null returning id`, [address, id, wallet])
+      res.json({ success: !!r })
+    } catch {
+      res.status(500).json({ success: false })
+    }
+  })
+
+  // SOLANA: enumerate how many NFTs a wallet holds from a Metaplex collection (DAS getAssetsByOwner).
+  // Replaces the EVM "owns any ERC-721 from contract X" / OpenSea account lookup. Returns a count + boolean.
+  app.get('/api/collections/:id/owned', cache('5 seconds'), async (req: Request, res: Response) => {
+    const id = parseInt(req.params.id, 10)
+    const wallet = typeof req.query.wallet === 'string' ? req.query.wallet : ''
+    if (isNaN(id) || !isSolanaAddress(wallet)) {
+      res.status(400).json({ success: false, message: 'Invalid params' })
+      return
+    }
+    const collection = await Collection.loadFromId(id)
+    const collectionMint = collection?.address
+    if (!collection || !collectionMint || !isSolanaAddress(collectionMint)) {
+      res.json({ success: true, count: 0, owned: false })
+      return
+    }
+    const count = await countNftsFromCollection(wallet, collectionMint)
+    res.json({ success: true, count, owned: count > 0 })
+  })
+}

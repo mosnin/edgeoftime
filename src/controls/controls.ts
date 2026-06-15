@@ -1,0 +1,761 @@
+import { isDesktop, isMobile } from '../../common/helpers/detector'
+import { User } from '../user'
+import { decodeCoordsFromURL } from '../utils/helpers'
+import { encodeCoords } from '../../common/helpers/utils'
+import type Grid from '../grid'
+import Connector from '../connector'
+import OurCamera from './utils/our-camera'
+import { isLoaded } from '../utils/loading-done'
+import Feature, { MeshExtended } from '../features/feature'
+import Avatar from '../avatar'
+import { cameraPosition, cameraRotation } from '../utils/camera'
+import type { Environment } from '../enviroments/environment'
+import { hasPointerLock } from '../../common/helpers/ui-helpers'
+import { IControls } from './iControls'
+import { Animations } from '../avatar-animations'
+
+export const CAMERA_DISTANCE = isMobile() ? 2.5 : 1.5
+export const MIN_CAMERA_DISTANCE = 0.5
+export const MAX_CAMERA_DISTANCE = 10
+const CAMERA_EASE_OUT = 1.4
+const SWIM_LEVEL = -2
+
+/** Meters behind the person in front (each hop of the snake). */
+const CONGA_FOLLOW_DISTANCE = 1.35
+/** Extra depth when the line has stopped so the cluster is not on top of each other. */
+const CONGA_STOPPED_EXTRA_BACK = 0.28
+/** Max side offset per player when stopped (meters), scaled by group blend. */
+const CONGA_LATERAL_PER_SLOT = 0.48
+
+/** Stable -3..3 slot from uuid so each follower picks a different side offset when grouped. */
+function congaLateralSlot(uuid: string): number {
+  let h = 2166136261
+  for (let i = 0; i < uuid.length; i++) {
+    h ^= uuid.charCodeAt(i)
+    h = Math.imul(h, 16777619)
+  }
+  return (((h % 7) + 7) % 7) - 3
+}
+
+const WALK_TO_RUN_EASE = new BABYLON.SineEase()
+WALK_TO_RUN_EASE.setEasingMode(BABYLON.EasingFunction.EASINGMODE_EASEIN)
+const RUN_TO_WALK_EASE = new BABYLON.SineEase()
+RUN_TO_WALK_EASE.setEasingMode(BABYLON.EasingFunction.EASINGMODE_EASEOUT)
+
+/**
+ * Get the next value of easing the current number to the target number
+ * CAMERA_EASE_OUT defines the speed
+ */
+const easeCamera = (current: number, target: number, easingSpeed = CAMERA_EASE_OUT) => {
+  if (target === current) {
+    return current
+  }
+
+  if (target <= current) {
+    // Close, jump straight to target
+    if (current - target <= 0.01) {
+      return target
+    }
+    // Target is smaller, divide gap by constant to ease into target value
+    return target + (current - target) / easingSpeed
+  } else {
+    // Target is bigger, multiply by constant
+    const candidate = Math.max(current, 0.1) * easingSpeed
+    if (candidate >= target) {
+      return target
+    } else {
+      return candidate
+    }
+  }
+}
+
+/**
+ * The minimum camera distance for the player's avatar to be displayed to themselves
+ */
+const MIN_CAMERA_DISTANCE_FOR_SELF_AVATAR = 0.2
+
+export default abstract class Controls implements IControls {
+  camera: OurCamera | BABYLON.ArcRotateCamera = undefined!
+  // initialCameraPos:
+  // this allows us to do camera transformation for 1st/3rd view and still keeping the
+  // Controls to move the camera. The trick is to cache the camera position before rendering
+  // the 3rd person view so that we can reset the camera position after the rendering for control
+  // purposes. If we manage to change the controls to move the Persona, we wont need to do this
+  // hack.
+  initialCameraPos: BABYLON.Vector3 | null = null
+  facingForward = true
+  hasGamepad = false
+  flying = true
+  jumping = false
+  swimming = false
+  cameraDistance = 0
+  targetCameraDistance: number = CAMERA_DISTANCE
+  reticuleNormal: BABYLON.Mesh
+  reticuleHighlight: BABYLON.Mesh
+  user: User
+  defaultSpeed = 0.88
+  runSpeed = 4.0
+  running = false
+  movementEnabled = true
+  shiftKey = false
+  ctrlKey = false
+  firstPersonView = true
+  walkRunAnimation: BABYLON.Animatable | null = null
+
+  // Transformation of world coordinates to a smaller absolute coordinates near the player, to avoid floating-point precision issues when visiting far-off island
+  // Only setting position is supported, not rotation or scale.
+  worldOffset: BABYLON.TransformNode
+
+  grounded = true
+
+  congaTarget: Avatar | null = null
+  /** Leader's inConga can arrive a few ticks late over multiplayer. */
+  private congaSyncGraceUntil = 0
+  private congaSawLeaderInConga = false
+  /** Track movement of person in front; when still, blend toward arc / group layout. */
+  private congaTargetPrevPos: BABYLON.Vector3 | null = null
+  private congaGroupBlend = 0
+  /** Flying mode before joining conga; restored in stopConga. */
+  private congaFlyingRestore: boolean | null = null
+
+  MAX_PICK_DISTANCE = 20
+  gravityDisabledOverride: boolean | null = null
+  audioContext: AudioContext = undefined!
+  private cameraZoomed = false
+  // For gravity gating. See refreshGravity().
+  private _containingParcelsWaitState: 'ready' | 'waiting-for-parcel-list' | 'waiting-for-colliders' = 'ready'
+  private _containingParcels: number[] = []
+
+  constructor(
+    protected scene: BABYLON.Scene,
+    protected canvas: HTMLCanvasElement,
+  ) {
+    this.user = window.user
+
+    this.worldOffset = new BABYLON.TransformNode('avatar/worldOffset', this.scene)
+
+    // ensure world offset is set, otherwise risk of race condition
+    const coords = decodeCoordsFromURL()
+    this.worldOffset.position.set(-coords.position.x, 0, -coords.position.z)
+
+    // Add input system specific controls and cameras
+    const camera = this.createCamera()
+    this.addControls(camera)
+
+    this.camera = camera
+    this.scene.activeCamera = camera
+    camera.parent = this.worldOffset
+
+    // Enable feature clicking
+    this.scene.onPointerObservable.add(this.featureClickHandler.bind(this))
+
+    this.reticuleNormal = generateReticule(scene, false)
+    this.reticuleNormal.setEnabled(true)
+    this.reticuleNormal.parent = this.camera
+    this.reticuleHighlight = generateReticule(scene, true)
+    this.reticuleHighlight.setEnabled(false)
+    this.reticuleHighlight.parent = this.camera
+
+    if (isDesktop() && window.config.wantsUI) {
+      this.scene.registerBeforeRender(() => {
+        // Show the reticule in 20% visibility in 3rd person mode.
+        this.reticuleNormal.visibility = hasPointerLock() || this.hasGamepad ? (this.firstPersonView ? 1 : 0.2) : 0
+        this.reticuleHighlight.visibility = hasPointerLock() || this.hasGamepad ? (this.firstPersonView ? 1 : 0.2) : 0
+      })
+    }
+
+    if (!window.config.isOrbit) {
+      this.scene.onBeforeRenderObservable.add(() => {
+        if (this.initialCameraPos) {
+          console.warn('this.initialCameraPos already set in onBeforeRenderObservable(). suspected logic error')
+        }
+        this.updateConga()
+        // let persona update its position from the camera, since we are steering the camera
+        this.persona.update(cameraPosition(this.scene), cameraRotation(this.scene), this)
+        this.swimming = this.persona.isSwimming(SWIM_LEVEL) ?? this.swimming
+        // store the position before we do camera adjustment in perspectiveAdjustment
+        this.initialCameraPos = this.camera.position.clone()
+        // adjust camera for 1st / 3rd person view
+        this.firstOrThirdPersonAdjustment()
+      })
+
+      this.scene.onAfterRenderObservable.add(() => {
+        if (this.initialCameraPos) {
+          // we have rendered, possibly with the camera in 3rd person view, set it back to how it was before adjustement
+          this.camera.position = this.initialCameraPos
+          this.initialCameraPos = null
+        } else {
+          console.warn('resetCamera() called without an this.initialCameraPos. suspected logic error')
+        }
+      })
+    }
+
+    // Seriously limit pick checking on mouse moves
+    this.defaultPointerMovePredicate = this.defaultPointerMovePredicate.bind(this)
+    this.scene.pointerMovePredicate = this.defaultPointerMovePredicate
+  }
+
+  get persona() {
+    return window.persona
+  }
+
+  get grid(): Grid | undefined {
+    // fixme decoupling
+    return window.grid
+  }
+
+  get showSelfAvatar(): boolean {
+    return !this.persona.firstPersonView && this.cameraDistance >= MIN_CAMERA_DISTANCE_FOR_SELF_AVATAR
+  }
+
+  get connector(): Connector {
+    return window.connector
+  }
+
+  // Some work can't be done in the ctor, because the scene has not yet had its environment field set.
+  attachEnvironment(environment: Environment) {
+    environment.groundStateObservable.addStateObserver('loaded', () => this._handleGroundLoaded())
+    environment.groundStateObservable.addStateObserver('unloaded', () => this._handleGroundUnloaded())
+  }
+
+  toggleZoom() {
+    const animateFov = (target: number) => {
+      const camera = this.scene.activeCamera
+      if (!camera) {
+        return
+      }
+      this.cameraZoomed = !this.cameraZoomed
+      BABYLON.Animation.CreateAndStartAnimation('fov anim', camera, 'fov', 120, 15, camera.fov, target, 0)
+    }
+
+    if (!this.cameraZoomed) {
+      this.enterFirstPerson()
+      animateFov(0.45)
+    } else {
+      animateFov(window.fov.value)
+    }
+  }
+
+  featureClickHandler(eventData: BABYLON.PointerInfo) {
+    // Left-click pointerdown in lock mode
+    // Note that we use POINTERTAP so it's the same event that captures pointerlock
+    // This means that the pointerlock capture can "skipNextObservers" and supress this behavour
+    if (eventData.event.button === 0 && eventData.type === BABYLON.PointerEventTypes.POINTERPICK && this.isFeatureClickingAllowed()) {
+      // Don't allow feature clicking while the UI is visible
+      if (window.ui?.visible || window.ui?.activeTool) {
+        return
+      }
+      const distance = eventData.pickInfo?.distance || Infinity
+      const parcel = (eventData?.pickInfo?.pickedMesh as MeshExtended | undefined)?.feature?.parcel
+      // Dont allow clicking if user is far away; UNLESS the feature is from a parcel you can edit
+      if (distance > this.MAX_PICK_DISTANCE && !parcel?.canEdit) return
+      const candidateHandler = (eventData?.pickInfo?.pickedMesh as MeshExtended).cvOnLeftClick
+
+      if (candidateHandler !== undefined) {
+        candidateHandler(eventData?.pickInfo)
+      }
+    }
+  }
+
+  handleContextClick(pickInfo?: BABYLON.PickingInfo | null) {
+    if (!pickInfo) return
+
+    if (pickInfo.pickedMesh && 'feature' in pickInfo.pickedMesh && pickInfo.pickedMesh['feature'] instanceof Feature) {
+      const feature = pickInfo.pickedMesh['feature']
+      if (feature.onContextClick()) return
+      // we fall back to viewing parcel info if the onContextClick isn't handled by feature
+    }
+
+    if (pickInfo.pickedMesh && pickInfo.pickedMesh.metadata?.avatar instanceof Avatar) {
+      const avatar: Avatar = pickInfo.pickedMesh.metadata.avatar
+      avatar.onContextClick()
+      return
+    }
+
+    if (pickInfo.pickedPoint && this.grid) {
+      // can't easily get the parcel for a given mesh so instead we look up parcel nearest to click
+      // fallback to currentParcel if no nearby parcels (used for spaces and when editing before fully loaded)
+      const parcel = this.grid.getNearest(6, pickInfo.pickedPoint)[0] || this.grid.currentOrNearestParcel()
+      if (parcel && parcel.onContextClick()) return
+    }
+  }
+
+  isOnGround(tolerance = 0): boolean {
+    // If you're using an ArcRotateCamera you're never marked as being on the ground
+    if (!('ellipsoid' in this.camera)) {
+      return false
+    }
+
+    const distance = this.camera.ellipsoid.y * 2 + BABYLON.Epsilon + tolerance
+    const globalPosition = this.persona.position.add(this.worldOffset.position)
+    const ray = new BABYLON.Ray(globalPosition, new BABYLON.Vector3(0, -1), distance)
+    const hit = this.scene.pickWithRay(ray, (e) => e.checkCollisions, true)
+    return hit?.hit ?? false
+  }
+
+  firstOrThirdPersonAdjustment() {
+    // build a vector projected backwards from the avatar away from the look-direction
+    const cameraQuat = BABYLON.Quaternion.RotationYawPitchRoll(this.camera.rotation.y, this.camera.rotation.x, this.camera.rotation.z)
+    const backwards = new BABYLON.Vector3(0, 0, -1).rotateByQuaternionToRef(cameraQuat, new BABYLON.Vector3())
+
+    if (this.firstPersonView) {
+      this.cameraDistance = easeCamera(this.cameraDistance, 0)
+      if (this.cameraDistance <= 0) {
+        this.persona.firstPersonView = this.firstPersonView
+      }
+    } else {
+      this.cameraDistance = 2.0
+    }
+
+    // place camera
+    this.camera.position.copyFrom(this.persona.position.add(backwards.scale(this.cameraDistance)))
+
+    // Show/hide the avatar
+    this.showSelfAvatar ? this.persona.avatar?.show() : this.persona.avatar?.hide()
+  }
+
+  abstract createCamera(): OurCamera | BABYLON.ArcRotateCamera
+
+  abstract addControls(camera: OurCamera | BABYLON.ArcRotateCamera): void
+
+  enableMovement() {
+    this.camera.speed = this.running ? this.runSpeed : this.defaultSpeed
+    this.movementEnabled = true
+  }
+
+  disableMovement() {
+    this.camera.speed = 0
+    this.movementEnabled = false
+  }
+
+  toggleRun() {
+    if (this.running) {
+      this.walk()
+    } else {
+      this.run()
+    }
+  }
+
+  run() {
+    this.running = true
+
+    if (this.movementEnabled) {
+      const fps = 60
+      const duration = 10
+      this.walkRunAnimation?.stop()
+      this.walkRunAnimation = BABYLON.Animation.CreateAndStartAnimation('walk-to-run', this.camera, 'speed', fps, duration, this.camera.speed, this.runSpeed, undefined, WALK_TO_RUN_EASE)
+      this.walkRunAnimation!.loopAnimation = false
+    }
+  }
+
+  walk() {
+    this.running = false
+
+    if (this.movementEnabled) {
+      const fps = 60
+      const duration = 13
+      this.walkRunAnimation?.stop()
+      this.walkRunAnimation = BABYLON.Animation.CreateAndStartAnimation('walk-to-run', this.camera, 'speed', fps, duration, this.camera.speed, this.defaultSpeed, undefined, WALK_TO_RUN_EASE)
+      this.walkRunAnimation!.loopAnimation = false
+    }
+  }
+
+  resetWorldOffset(position: BABYLON.Vector3) {
+    this.worldOffset.position.set(-position.x, 0, -position.z)
+
+    const refreshRecursive = (mesh: BABYLON.TransformNode) => {
+      mesh.markAsDirty('position')
+      if (mesh.isWorldMatrixFrozen) {
+        mesh.freezeWorldMatrix()
+      } else {
+        mesh.computeWorldMatrix()
+      }
+
+      // Thaw and refreeze any frozen world-matrices, as the global offset effects them
+      mesh.getChildren().forEach((child) => {
+        if (child instanceof BABYLON.TransformNode) {
+          refreshRecursive(child)
+        }
+      })
+    }
+
+    refreshRecursive(this.worldOffset)
+  }
+
+  worldToAbsolutePosition(worldPosition: BABYLON.Vector3) {
+    return this.worldOffset.absolutePosition.add(worldPosition)
+  }
+
+  setActiveReticule(highlight = false) {
+    if (highlight && this.reticuleNormal.isEnabled()) {
+      this.reticuleHighlight.setEnabled(true)
+      this.reticuleNormal.setEnabled(false)
+    } else if (!highlight && this.reticuleHighlight.isEnabled()) {
+      this.reticuleHighlight.setEnabled(false)
+      this.reticuleNormal.setEnabled(true)
+    }
+  }
+
+  setFlying(value: boolean) {
+    this.flying = value
+  }
+
+  toggleFlying() {
+    this.setFlying(!this.flying)
+  }
+
+  // called on spawn and teleport
+  public invalidateGroundLoaded() {
+    if (!window.environment) {
+      throw new Error('invalidateGroundLoaded() called before attachEnvironment()!')
+    }
+
+    //TODO: Instead of switching on environment type here, this logic should probably be moved into methods in SpaceEnvironment and WorldEnvironment that override an abstract Environment method
+    if (window.config.isSpace) {
+      // Spaces always contain exactly one Parcel with ID 0
+      this._containingParcels = [0]
+      this._containingParcelsWaitState = 'waiting-for-colliders'
+    } else {
+      if (!this.grid) {
+        throw new Error('invalidateGroundLoaded() called before attachEnvironment()!')
+      }
+
+      // The main thread doesn't keep a complete list of parcels, so we need to wait for the grid worker to tell us the definitive set of parcels containing the camera.
+      this._containingParcelsWaitState = 'waiting-for-parcel-list'
+      this.grid.queryParcelsAtPosition(this.camera.position).then((parcelIds) => {
+        this._containingParcels = parcelIds
+        this._containingParcelsWaitState = 'waiting-for-colliders'
+      })
+    }
+
+    window.environment.invalidateGroundLoaded()
+  }
+
+  // this is called by the render loop in index.ts
+  refreshGravity() {
+    if (this.camera instanceof OurCamera) {
+      // To avoid falling into the abyss, or through the floor of a second-floor parcel, gravity stays off at least until:
+      // 1. All islands have been meshed (this.grounded === true), and
+      // 2. Every parcel containing the camera position has a collider (this._containingParcelsWaitState === 'ready').
+      if (this._containingParcelsWaitState === 'waiting-for-colliders' && this._containingParcels.every((id) => this.grid?.getByID(id)?.isColliderEnabled())) {
+        this._containingParcels = []
+        this._containingParcelsWaitState = 'ready'
+      }
+      this.camera.applyGravity = !this.flying && !this.swimming && this.grounded && isLoaded() && !this.gravityDisabledOverride && this._containingParcelsWaitState === 'ready'
+    }
+  }
+
+  // Disables gravity until ground is detected underneath the avatar
+
+  disableGravity() {
+    console.debug('disabling gravity')
+    this.gravityDisabledOverride = true
+  }
+
+  enableGravity() {
+    console.debug('enabling gravity')
+    this.gravityDisabledOverride = null
+  }
+
+  togglePerspective() {
+    if (this.firstPersonView) {
+      this.enterThirdPerson()
+    } else {
+      this.enterFirstPerson()
+    }
+
+    this.persona.setIdleFirstPerson(this.firstPersonView)
+  }
+
+  enterThirdPerson(startingDistance = CAMERA_DISTANCE) {
+    if (!this.firstPersonView) {
+      return false
+    }
+    if (!this.persona) {
+      return false
+    }
+    if (this.cameraZoomed) {
+      this.toggleZoom()
+    }
+    this.cameraDistance = 0
+    this.targetCameraDistance = startingDistance
+    this.persona.firstPersonView = false
+    this.firstPersonView = false
+    return true
+  }
+
+  enterFirstPerson() {
+    if (this.firstPersonView) {
+      return false
+    }
+    if (this.cameraZoomed) {
+      this.toggleZoom()
+    }
+    this.firstPersonView = true
+    return true
+  }
+
+  startConga(target: Avatar) {
+    if (target.isDisposed()) return
+    this.canvas.focus() // joining via a chat link leaves focus on the <a>; canvas needs focus or WASD/Escape can't leave the line
+    this.congaTarget = target
+    this.congaSyncGraceUntil = Date.now() + 2500
+    this.congaSawLeaderInConga = false
+    this.congaTargetPrevPos = null
+    this.congaGroupBlend = 0
+    this.congaFlyingRestore = this.flying
+    this.connector.bumpCongaFollowUi()
+    if (this.firstPersonView) this.enterThirdPerson()
+  }
+
+  stopConga() {
+    const restoreFly = this.congaFlyingRestore
+    this.congaTarget = null
+    this.congaSyncGraceUntil = 0
+    this.congaSawLeaderInConga = false
+    this.congaTargetPrevPos = null
+    this.congaGroupBlend = 0
+    this.congaFlyingRestore = null
+    if (restoreFly !== null) {
+      this.setFlying(restoreFly)
+    }
+    // Must clear; leaving via keys only called stopConga() and left inConga true (looked like "leading" with no target).
+    this.connector.clearCongaLeaderStartedBanner()
+    this.connector.inConga = false
+    this.connector.beginCongaJoinHintSuppressionAfterLeave()
+  }
+
+  /** The avatar who started this line (head of the chain), for UI. Null when leading or not in a line. */
+  get congaLeaderAvatar(): Avatar | null {
+    return this.congaTarget ? this.resolveCongaLeaderAvatar(this.congaTarget) : null
+  }
+
+  /** Walk toward conga head using each avatar's congaFollowsUuid (who they follow). Old clients omit it; then `first` is used. */
+  private resolveCongaLeaderAvatar(first: Avatar): Avatar {
+    let L: Avatar = first
+    const seen = new Set<string>()
+    for (let i = 0; i < 24; i++) {
+      const fid = L.congaFollowsUuid
+      if (!fid) return L
+      if (seen.has(L.uuid)) return first
+      seen.add(L.uuid)
+      const next = this.connector.findAvatar(fid) as Avatar | null
+      if (!next?.inConga) return L
+      L = next
+    }
+    return L
+  }
+
+  private updateConga() {
+    const target = this.congaTarget
+    if (!target || !target.hasPosition || target.isDisposed()) {
+      if (this.congaTarget) this.stopConga()
+      return
+    }
+
+    if (!target.inConga) {
+      if (this.congaSawLeaderInConga) {
+        this.stopConga()
+        return
+      }
+      if (Date.now() >= this.congaSyncGraceUntil) {
+        this.stopConga()
+        return
+      }
+    } else {
+      this.congaSawLeaderInConga = true
+    }
+
+    const leaderAv = this.resolveCongaLeaderAvatar(target)
+    const leaderFlying = leaderAv.getTransform().animation === Animations.Floating
+    if (leaderFlying !== this.flying) {
+      this.setFlying(leaderFlying)
+    }
+
+    // match leader's facing direction
+    this.camera.rotation.y = target.orientation.y
+
+    const forward = new BABYLON.Vector3(Math.sin(target.orientation.y), 0, Math.cos(target.orientation.y))
+    let right = BABYLON.Vector3.Cross(BABYLON.Vector3.Up(), forward)
+    if (right.lengthSquared() < 1e-10) {
+      right = new BABYLON.Vector3(1, 0, 0)
+    } else {
+      right.normalize()
+    }
+
+    const dir = target.position.subtract(this.camera.position)
+    dir.y = 0
+    const gapHz = dir.length()
+    const gap3 = BABYLON.Vector3.Distance(target.position, this.camera.position)
+    if (leaderFlying ? gap3 > 30 : gapHz > 30) {
+      const tp = target.position.subtract(forward.scale(CONGA_FOLLOW_DISTANCE))
+      if (!leaderFlying) {
+        tp.y = this.camera.position.y
+      }
+      this.persona.teleportNoHistory({ position: tp })
+      return
+    }
+
+    const deltaTime = Math.min(this.scene.getEngine().getDeltaTime() / 1000, 0.1)
+
+    const prev = this.congaTargetPrevPos
+    if (prev) {
+      const targetMoved = BABYLON.Vector3.Distance(target.position, prev) > 0.022
+      if (targetMoved) {
+        this.congaGroupBlend = Math.max(0, this.congaGroupBlend - deltaTime * 4)
+      } else {
+        this.congaGroupBlend = Math.min(1, this.congaGroupBlend + deltaTime * 1.75)
+      }
+    }
+    this.congaTargetPrevPos = target.position.clone()
+
+    const g = this.congaGroupBlend
+    const backDist = CONGA_FOLLOW_DISTANCE + CONGA_STOPPED_EXTRA_BACK * g
+    const lateral = congaLateralSlot(this.connector.persona.uuid) * CONGA_LATERAL_PER_SLOT * g
+    const desired = target.position.subtract(forward.scale(backDist)).add(right.scale(lateral))
+    if (!leaderFlying) {
+      desired.y = this.camera.position.y
+    }
+
+    let pull = desired.subtract(this.camera.position)
+    if (!leaderFlying) {
+      pull.y = 0
+    }
+    const pullLen = pull.length()
+    if (pullLen < 0.015) return
+
+    pull.normalize()
+    const step = Math.min(1, deltaTime * (3 + pullLen * 1.8))
+    this.camera.position.addInPlace(pull.scale(Math.min(pullLen, pullLen * step)))
+  }
+
+  getCoords() {
+    if (window.config.isSpace) {
+      // if we're in a space, we use create coordinates based on the camera position since Spaces are centered at 0,0,0
+      return encodeCoords({ position: this.camera.position, rotation: this.camera.rotation })
+    }
+
+    const coords = {
+      position: this.persona.position.clone(),
+      rotation: this.camera.rotation.clone(),
+    }
+
+    return encodeCoords(coords)
+  }
+
+  /**
+   * BabylonJS predicate for deciding what can be picked by mouse-move events.
+   * Default implementation allows only sliders.
+   * This can be overridden, e.g. in tools/voxel.ts and tools/feature.ts
+   */
+  defaultPointerMovePredicate(mesh: BABYLON.AbstractMesh): boolean {
+    // CV custom additional check
+    return (
+      !!mesh.metadata?.captureMoveEvents &&
+      // Default checks that Bablyon performs
+      mesh.isPickable &&
+      mesh.isVisible &&
+      mesh.isReady() &&
+      mesh.isEnabled() &&
+      (mesh.enablePointerMoveEvents || this.scene.constantlyUpdateMeshUnderPointer || mesh._getActionManagerForTrigger() != null) &&
+      (!this.scene.cameraToUseForPointers || (this.scene.cameraToUseForPointers.layerMask & mesh.layerMask) !== 0)
+    )
+  }
+
+  /**
+   * Are features able to be clicked on? Overridden in device-specific control classes
+   */
+  isFeatureClickingAllowed(): boolean {
+    return true
+  }
+
+  protected _handleGroundUnloaded() {
+    this.grounded = false
+  }
+
+  protected _handleGroundLoaded() {
+    this.grounded = true
+  }
+}
+
+function generateReticule(scene: BABYLON.Scene, highlight = false) {
+  let name = 'reticule'
+  if (highlight) {
+    name += '_highlight'
+  }
+  const w = 128
+  const utilLayer = new BABYLON.UtilityLayerRenderer(scene)
+  const texture = new BABYLON.DynamicTexture(name, w, scene, false)
+  texture.hasAlpha = true
+
+  const ctx = <CanvasRenderingContext2D>texture.getContext()
+
+  const createHexagon = () => {
+    const radius = w * 0.1
+    const centerX = w * 0.5
+    const centerY = w * 0.5
+
+    // Background
+    ctx.beginPath()
+    ctx.strokeStyle = 'rgba(0, 0, 0, 0.5)'
+    ctx.lineWidth = 2
+
+    for (let i = 0; i <= 6; i++) {
+      const angle = (Math.PI / 3) * i - Math.PI / 2
+      const x = centerX + radius * Math.cos(angle)
+      const y = centerY + radius * Math.sin(angle)
+      if (i === 0) {
+        ctx.moveTo(x + 2, y + 2)
+      } else {
+        ctx.lineTo(x + 2, y + 2)
+      }
+    }
+
+    ctx.stroke()
+
+    // Foreground
+    ctx.beginPath()
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)'
+    ctx.lineWidth = highlight ? 3 : 2
+
+    for (let i = 0; i <= 6; i++) {
+      const angle = (Math.PI / 3) * i - Math.PI / 2
+      const x = centerX + radius * Math.cos(angle)
+      const y = centerY + radius * Math.sin(angle)
+      if (i === 0) {
+        ctx.moveTo(x, y)
+      } else {
+        ctx.lineTo(x, y)
+      }
+    }
+
+    ctx.stroke()
+
+    texture.update()
+  }
+
+  createHexagon()
+
+  const material = new BABYLON.StandardMaterial(name, scene)
+  material.diffuseTexture = texture
+  material.opacityTexture = texture
+  material.emissiveColor.set(1, 1, 1)
+  material.disableLighting = true
+
+  const reticule = BABYLON.MeshBuilder.CreatePlane(name, { size: 0.02 }, utilLayer.utilityLayerScene)
+  reticule.material = material
+  reticule.position.set(0, 0, 0.2)
+  reticule.isPickable = false
+  // reticule.rotation.z = Math.PI / 4
+  // set invisible until render loop starts
+  reticule.visibility = 0
+
+  // material.freeze()
+  // material.blockDirtyMechanism = true
+
+  // if (highlight) {
+  //   animateReticuleScale(reticule)
+  // }
+
+  return reticule
+}
