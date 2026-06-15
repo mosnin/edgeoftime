@@ -79,50 +79,178 @@ html, body {
 #overlay {
   position: fixed;
   inset: 0;
-  background: radial-gradient(circle at 50% 30%, #0a1430 0%, #02040a 70%);
+  overflow: hidden;
+  background:
+    radial-gradient(120% 90% at 50% 8%, rgba(255,180,90,0.18) 0%, rgba(120,40,160,0.10) 26%, rgba(4,6,16,0) 55%),
+    radial-gradient(circle at 50% 36%, #0a1230 0%, #03040c 60%, #000 100%);
   display: flex;
   align-items: center;
   justify-content: center;
   z-index: 10;
 }
+
+/* --- animated background layers --- */
+#overlay .bg-stars,
+#overlay .bg-galaxy,
+#overlay .bg-grid { position: absolute; inset: 0; pointer-events: none; }
+
+/* twinkling starfield via layered radial-gradients */
+#overlay .bg-stars {
+  background-image:
+    radial-gradient(1.5px 1.5px at 20% 30%, #fff, transparent),
+    radial-gradient(1.5px 1.5px at 75% 18%, #cfe6ff, transparent),
+    radial-gradient(1px 1px at 40% 70%, #fff, transparent),
+    radial-gradient(1px 1px at 88% 62%, #bcd4ff, transparent),
+    radial-gradient(1.5px 1.5px at 60% 45%, #fff, transparent),
+    radial-gradient(1px 1px at 12% 84%, #fff, transparent),
+    radial-gradient(1px 1px at 32% 12%, #e6f0ff, transparent),
+    radial-gradient(1px 1px at 92% 32%, #fff, transparent);
+  animation: twinkle 5s ease-in-out infinite alternate;
+}
+@keyframes twinkle { from { opacity: 0.45; } to { opacity: 1; } }
+
+/* a slowly spinning Dyson-star / galaxy halo behind the title */
+#overlay .bg-galaxy {
+  background:
+    conic-gradient(from 0deg at 50% 34%,
+      rgba(127,209,255,0.00) 0deg,
+      rgba(127,209,255,0.10) 40deg,
+      rgba(255,170,80,0.16) 110deg,
+      rgba(160,80,255,0.10) 200deg,
+      rgba(90,255,200,0.10) 290deg,
+      rgba(127,209,255,0.00) 360deg);
+  filter: blur(18px);
+  animation: spin 60s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* synthwave horizon grid sweeping toward the viewer */
+#overlay .bg-grid {
+  top: 58%;
+  background-image:
+    linear-gradient(rgba(127,209,255,0.22) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(127,209,255,0.18) 1px, transparent 1px);
+  background-size: 44px 44px;
+  transform: perspective(340px) rotateX(62deg);
+  transform-origin: top center;
+  mask-image: linear-gradient(to bottom, #000 0%, transparent 75%);
+  -webkit-mask-image: linear-gradient(to bottom, #000 0%, transparent 75%);
+  animation: grid-roll 3.2s linear infinite;
+}
+@keyframes grid-roll { from { background-position: 0 0; } to { background-position: 0 44px; } }
+
 .panel {
+  position: relative;
+  z-index: 1;
   text-align: center;
-  max-width: 560px;
+  max-width: 600px;
   padding: 40px;
+  background: rgba(6, 10, 22, 0.45);
+  border: 1px solid rgba(127,209,255,0.18);
+  border-radius: 16px;
+  backdrop-filter: blur(6px);
+  box-shadow: 0 0 60px rgba(20,60,120,0.35), inset 0 0 40px rgba(20,50,110,0.2);
+  animation: panel-in 0.8s cubic-bezier(0.2,0.9,0.25,1) both;
 }
+@keyframes panel-in { from { opacity: 0; transform: translateY(18px) scale(0.98); } to { opacity: 1; transform: none; } }
+
+.badge {
+  display: inline-block;
+  font-size: 11px;
+  letter-spacing: 4px;
+  color: #ffd08a;
+  border: 1px solid rgba(255,180,90,0.45);
+  border-radius: 999px;
+  padding: 5px 14px;
+  margin-bottom: 18px;
+  background: rgba(255,160,60,0.08);
+  text-shadow: 0 0 10px rgba(255,170,80,0.6);
+}
+
 .panel h1 {
-  font-size: 52px;
-  letter-spacing: 6px;
-  color: #fff;
-  text-shadow: 0 0 24px rgba(127,209,255,0.7);
-  margin-bottom: 8px;
+  position: relative;
+  font-size: 60px;
+  font-weight: 800;
+  letter-spacing: 8px;
+  margin-bottom: 10px;
+  background: linear-gradient(90deg, #7fd1ff, #fff, #ffd08a, #b07bff, #7fd1ff);
+  background-size: 300% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  filter: drop-shadow(0 0 18px rgba(127,209,255,0.55));
+  animation: title-shimmer 7s linear infinite;
 }
-.panel .tag { color: #8fb6dd; margin-bottom: 28px; }
+@keyframes title-shimmer { to { background-position: 300% 0; } }
+/* faint glitch echo of the title */
+.panel h1::before {
+  content: attr(data-text);
+  position: absolute;
+  left: 0; top: 0;
+  width: 100%;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+  text-shadow: 2px 0 rgba(255,80,160,0.35), -2px 0 rgba(80,220,255,0.35);
+  background: none;
+  z-index: -1;
+  animation: glitch 4.5s steps(2) infinite;
+}
+@keyframes glitch {
+  0%, 92%, 100% { transform: none; opacity: 0; }
+  93% { transform: translate(2px,-1px); opacity: 0.8; }
+  96% { transform: translate(-2px,1px); opacity: 0.8; }
+}
+
+.panel .tag { color: #9fc3e8; margin-bottom: 28px; font-size: 15px; letter-spacing: 0.5px; }
+
 .controls {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 8px 24px;
+  gap: 6px 26px;
   text-align: left;
-  margin-bottom: 28px;
+  margin-bottom: 30px;
 }
 .controls div {
   display: flex;
   justify-content: space-between;
   border-bottom: 1px solid rgba(127,209,255,0.12);
-  padding: 4px 0;
-  font-size: 14px;
+  padding: 5px 0;
+  font-size: 13px;
+  color: #b9d4ef;
 }
-.controls span { color: #7fd1ff; }
+.controls span { color: #7fd1ff; font-weight: 600; }
+
 #play {
-  background: linear-gradient(180deg, #1e6bb8, #0d3f73);
+  position: relative;
+  background: linear-gradient(180deg, #1f7fd0, #0c3f78);
   color: #fff;
-  border: 1px solid #7fd1ff;
-  padding: 14px 34px;
-  font-size: 18px;
-  letter-spacing: 2px;
-  border-radius: 8px;
+  border: 1px solid #9fe0ff;
+  padding: 16px 40px;
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: 3px;
+  border-radius: 10px;
   cursor: pointer;
-  transition: transform 0.1s, box-shadow 0.2s;
+  overflow: hidden;
+  box-shadow: 0 0 0 rgba(127,209,255,0.6);
+  transition: transform 0.12s ease, box-shadow 0.25s ease;
+  animation: play-pulse 2.4s ease-in-out infinite;
 }
-#play:hover { transform: scale(1.04); box-shadow: 0 0 22px rgba(127,209,255,0.5); }
-.panel .small { margin-top: 18px; font-size: 13px; color: #6f90b0; }
+@keyframes play-pulse {
+  0%, 100% { box-shadow: 0 0 14px rgba(127,209,255,0.35); }
+  50% { box-shadow: 0 0 30px rgba(127,209,255,0.7); }
+}
+#play::after { /* sheen sweep */
+  content: "";
+  position: absolute;
+  top: 0; left: -120%;
+  width: 60%; height: 100%;
+  background: linear-gradient(100deg, transparent, rgba(255,255,255,0.45), transparent);
+  transform: skewX(-20deg);
+  animation: sheen 3.5s ease-in-out infinite;
+}
+@keyframes sheen { 0% { left: -120%; } 55%, 100% { left: 160%; } }
+#play:hover { transform: scale(1.05); box-shadow: 0 0 34px rgba(127,209,255,0.85); }
+#play span { position: relative; z-index: 1; }
+
+.panel .small { margin-top: 18px; font-size: 12px; color: #6f90b0; letter-spacing: 0.5px; }

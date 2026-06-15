@@ -2,7 +2,10 @@
 // Free 6DOF flight between orbiting planets; land on the nearest one.
 
 import * as THREE from "three";
-import { PLANETS, buildStarfield, buildSun } from "./SolarSystem.js";
+import {
+  PLANETS, buildStarfield, buildSun, buildSunGlow,
+  buildDysonSwarm, buildDysonRings, buildGalaxy, buildPlanetRing,
+} from "./SolarSystem.js";
 
 const BOOST_MULT = 3.2;
 const THRUST_ACCEL = 60;     // world units / s^2 while a thrust key is held
@@ -26,9 +29,11 @@ export default class SpaceMap {
   _build() {
     if (this._built) return;
 
-    // Starfield.
+    // Starfield + a faraway spiral galaxy backdrop (Type-III home).
     this._starfield = buildStarfield();
     this.scene.add(this._starfield);
+    this._galaxy = buildGalaxy();
+    this.scene.add(this._galaxy);
 
     // Sun (mesh + light) and ambient.
     const sun = buildSun();
@@ -41,7 +46,17 @@ export default class SpaceMap {
     this._ambient = new THREE.AmbientLight(amb.color, amb.intensity);
     this.scene.add(this._ambient);
 
-    // One mesh per planet, colored & sized by its descriptor.
+    // Kardashev-III megastructures around the star: corona glow, a Dyson swarm
+    // of millions of collectors, and giant scaffolding rings.
+    this._sunGlow = buildSunGlow();
+    this.scene.add(this._sunGlow);
+    this._dysonSwarm = buildDysonSwarm();
+    this.scene.add(this._dysonSwarm);
+    this._dysonRings = buildDysonRings();
+    this.scene.add(this._dysonRings);
+
+    // One mesh per planet, colored & sized by its descriptor. Larger worlds get
+    // an orbital-ring megastructure to sell the engineered-galaxy look.
     this._planets = PLANETS.map((desc) => {
       const geometry = new THREE.SphereGeometry(desc.radius, 32, 24);
       const material = new THREE.MeshStandardMaterial({
@@ -53,7 +68,13 @@ export default class SpaceMap {
       mesh.name = "planet:" + desc.name;
       this._placePlanet(desc, mesh);
       this.scene.add(mesh);
-      return { desc, mesh };
+
+      let ring = null;
+      if (desc.radius >= 80) {
+        ring = buildPlanetRing(desc.radius, 0x66ccff);
+        mesh.add(ring); // child -> follows the planet's orbit automatically
+      }
+      return { desc, mesh, ring };
     });
 
     this._built = true;
@@ -171,6 +192,18 @@ export default class SpaceMap {
     robot.syncModel();
     robot.updateCamera(game.camera, { thirdPerson: true });
 
+    // Animate the Kardashev-III megastructures.
+    this._t = (this._t || 0) + dt;
+    if (this._dysonSwarm) this._dysonSwarm.rotation.y += 0.015 * dt;
+    if (this._dysonRings) {
+      this._dysonRings.rotation.y += 0.03 * dt;
+      this._dysonRings.rotation.x += 0.008 * dt;
+    }
+    if (this._galaxy) this._galaxy.rotation.z += 0.004 * dt;
+    if (this._sunGlow) {
+      this._sunGlow.scale.setScalar(1 + Math.sin(this._t * 0.8) * 0.04);
+    }
+
     // Advance orbits + spin planets, then find the nearest one.
     let nearest = null;
     let nearestSurfDist = Infinity;
@@ -250,8 +283,23 @@ export default class SpaceMap {
       this.scene.remove(this._ambient);
       this._ambient = null;
     }
+    // Megastructures (galaxy, sun glow, Dyson swarm + rings).
+    for (const key of ["_galaxy", "_sunGlow", "_dysonSwarm", "_dysonRings"]) {
+      const obj = this[key];
+      if (!obj) continue;
+      this.scene.remove(obj);
+      obj.traverse((o) => {
+        if (o.geometry) o.geometry.dispose();
+        if (o.material) o.material.dispose();
+      });
+      this[key] = null;
+    }
     for (const p of this._planets) {
       this.scene.remove(p.mesh);
+      if (p.ring) {
+        p.ring.geometry.dispose();
+        p.ring.material.dispose();
+      }
       p.mesh.geometry.dispose();
       p.mesh.material.dispose();
     }
