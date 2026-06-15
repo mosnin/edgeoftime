@@ -1,4 +1,5 @@
-import { isAddress } from 'ethers'
+// SOLANA: was ethers `isAddress` (0x-hex); now base58 pubkey validation.
+import { isSolanaAddress } from '../../common/helpers/utils'
 import { Component } from 'preact'
 import { ApiAvatar } from '../../common/messages/api-avatars'
 import Profile from './components/avatar-profile/profile'
@@ -30,7 +31,8 @@ export default class Avatar extends Component<Props, State> {
   }
 
   private get wallet() {
-    if (this.props.walletOrName && this.props.walletOrName.startsWith('0x') && isAddress(this.props.walletOrName)) {
+    // SOLANA: a wallet is a base58 ed25519 pubkey, not a 0x-hex address.
+    if (this.props.walletOrName && isSolanaAddress(this.props.walletOrName)) {
       return this.props.walletOrName
     } else if (this.state.avatar) {
       return this.state.avatar.owner

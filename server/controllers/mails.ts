@@ -1,4 +1,5 @@
-import { ethers } from 'ethers'
+// SOLANA: dropped `ethers` import; wallet validation now uses isSolanaAddress.
+import { isSolanaAddress } from '../lib/solana-helpers'
 import cache from '../cache'
 import { createMail, markAsRead } from '../handlers/mails-handler'
 import { isMod } from '../lib/helpers'
@@ -14,11 +15,12 @@ export default function MailsController(db: Db, passport: PassportStatic, app: E
   app.put('/api/mails/read', passport.authenticate('jwt', { session: false }), markAsRead)
 
   app.get('/api/mails/by/:wallet.json', cache('1 seconds'), passport.authenticate('jwt', { session: false }), authWallet, async (req, res) => {
+    // SOLANA: Solana pubkeys are case-sensitive base58 — match exactly, no lower().
     const result = await db.query(
       'embedded/get-mails-by-wallet',
       `select id,
       sender,
-      (select name from avatars where lower(avatars.owner) = lower(mails.sender)) as sender_name,
+      (select name from avatars where avatars.owner = mails.sender) as sender_name,
       destinator,
       subject,
       created_at,
@@ -26,9 +28,9 @@ export default function MailsController(db: Db, passport: PassportStatic, app: E
       convert_from(decrypt(content::bytea, 'salty', 'aes'), 'SQL_ASCII') as content
        from mails
        where
-       lower(destinator) = lower($1)
+       destinator = $1
        OR
-       lower(sender) = lower($1)
+       sender = $1
        order by
        created_at desc`,
       [req.params.wallet],
@@ -38,11 +40,13 @@ export default function MailsController(db: Db, passport: PassportStatic, app: E
 }
 
 function authWallet(req: VoxelsUserRequest, res: Response, next: Function) {
-  if (!ethers.isAddress(req.params.wallet)) {
+  // SOLANA: validate base58 ed25519 pubkey instead of 0x hex address.
+  if (!isSolanaAddress(req.params.wallet)) {
     res.status(400).send({ success: false, message: 'Bad Request' })
     return
   }
-  if (req.user?.wallet?.toLowerCase() !== req.params.wallet.toLowerCase()) {
+  // SOLANA: case-sensitive compare — never toLowerCase a Solana pubkey.
+  if (req.user?.wallet !== req.params.wallet) {
     const isModerator = isMod(req)
     if (!isModerator) {
       res.status(401).send({ success: false, message: 'Unauthorized' })

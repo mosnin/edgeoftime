@@ -14,9 +14,9 @@ const headers = {
 let authToken: string | null = null
 let token_expiry_timestamp: number | null = null
 
-import { ethers } from 'ethers'
+// SOLANA: dropped `ethers` import; wallet validation now uses isSolanaAddress.
 import { Request, Response } from 'express'
-import { checkWalletOwnsPOAP } from '../../common/helpers/apis'
+import { isSolanaAddress } from '../lib/solana-helpers'
 import { named } from '../lib/logger'
 
 const secretKey = 'vOVH6sdmpNWjRRIqCc7rdxs01lwHzfr3'
@@ -55,7 +55,8 @@ const decrypt = async (encryptedHex: string): Promise<string> => {
 export async function redeemPoapForWallet(req: Request, res: Response) {
   const { event_id, code, wallet } = req.body
 
-  if (!wallet || !ethers.isAddress(wallet)) {
+  // SOLANA: validate base58 ed25519 pubkey instead of 0x hex address.
+  if (!wallet || !isSolanaAddress(wallet)) {
     res.json({ success: false, error: 'Invalid user wallet, are you logged in?' })
     return
   }
@@ -68,7 +69,12 @@ export async function redeemPoapForWallet(req: Request, res: Response) {
     return
   }
 
-  if (await checkWalletOwnsPOAP(event_id, wallet)) {
+  // SOLANA TODO: POAP is Ethereum-specific (ERC-721 on Gnosis Chain). The Solana
+  // analogue is a compressed-NFT (cNFT) badge looked up via the DAS API — out of
+  // scope here. Stub the on-chain "already owns this POAP" check to a safe empty
+  // result (false) so the flow proceeds without an EVM dependency.
+  const alreadyOwnsPoap = false
+  if (alreadyOwnsPoap) {
     res.json({ success: false, error: 'You already claimed that POAP' }) // or event is non-existent
     return
   }

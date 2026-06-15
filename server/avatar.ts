@@ -1,7 +1,8 @@
-import { ethers } from 'ethers'
+// SOLANA: dropped `ethers`; validate wallets with isSolanaAddress (base58 ed25519 pubkeys)
 import { getERC20Balance, getParcelsCount, getWalletBalance } from './lib/ethereum-helpers'
 import { isCVTeam, isMod } from './lib/helpers'
-import { ethAlchemy, TokenAddress } from './lib/utils'
+import { isSolanaAddress } from './lib/solana-helpers'
+import { TokenAddress } from './lib/utils'
 import db from './pg'
 
 export interface SuspendedAvatar {
@@ -29,6 +30,7 @@ export default class Avatar {
     return res.rows[0] as SuspendedAvatar
   }
 
+  // SOLANA: wallet is a case-sensitive base58 pubkey — match exactly, no lower()
   static async unsuspend(wallet: string) {
     const res = await db.query(
       'embedded/unsuspend-avatar',
@@ -38,7 +40,7 @@ export default class Avatar {
       set
         expires_at = now()
       where
-        lower(wallet) = lower($1) and expires_at>now()
+        wallet = $1 and expires_at>now()
       returning
         wallet,
         reason,
@@ -57,7 +59,7 @@ export default class Avatar {
       select
         * from banned_users
       where
-        lower(wallet)=lower($1) and expires_at>now()
+        wallet=$1 and expires_at>now()
       limit
         1
     `,
@@ -68,62 +70,45 @@ export default class Avatar {
   }
 
   static async fetchNames(wallet: string) {
-    if (!ethers.isAddress(wallet)) {
+    // SOLANA: validate base58 Solana pubkey instead of 0x EVM address
+    if (!isSolanaAddress(wallet)) {
       throw new Error(`${wallet}' is not a valid wallet address`)
     }
 
-    const names = [] // await fetchNamesFromSubGraph(wallet)
-
-    let ensName
-
-    try {
-      ensName = await ethAlchemy.lookupAddress(wallet)
-    } catch {}
-
-    if (ensName) {
-      names.push(ensName)
-    }
+    // SOLANA TODO: no ENS/name-service resolution yet; no off-chain names are sourced.
+    const names: string[] = []
 
     let name = null
 
     if (names.length > 0) {
-      await db.query('embedded/set-avatar-name', `update avatars set names=$1 where lower(owner)=lower($2)`, [names, wallet])
+      // SOLANA: owner is a case-sensitive base58 pubkey — compare exactly, no lower()
+      await db.query('embedded/set-avatar-name', `update avatars set names=$1 where owner=$2`, [names, wallet])
 
-      const result = await db.query('embedded/get-avatar-name', `select name from avatars where lower(owner)=lower($1) limit 1;`, [wallet])
+      const result = await db.query('embedded/get-avatar-name', `select name from avatars where owner=$1 limit 1;`, [wallet])
       if (result.rows && result.rows[0]) {
         name = result.rows[0].name
       }
 
       if (!name) {
-        // prefer .eth names
-        name = names.find((n) => n.match('.eth')) || names[0]
+        name = names[0]
 
-        await db.query('embedded/set-avatar-name', `update avatars set name=$1 where name=null and lower(owner)=lower($2) returning name`, [name, wallet])
+        await db.query('embedded/set-avatar-name', `update avatars set name=$1 where name=null and owner=$2 returning name`, [name, wallet])
       }
     }
 
     return { name, names }
   }
 
-  static async setENSNameIfAny(wallet: string) {
-    let name: string | null = null
-    if (!wallet) {
-      return name
-    }
-    try {
-      name = await ethAlchemy.lookupAddress(wallet)
-    } catch {
-      name = null
-    }
-    if (!name) {
-      return name
-    }
-    await db.query('embedded/set-avatar-name-2', `update avatars set name=$1 where lower(owner)=lower($2)`, [name, wallet])
-    return name
+  // SOLANA: ENS has no Solana analogue here — stubbed to a no-op returning null.
+  // Kept export name + signature so importers still compile.
+  static async setENSNameIfAny(wallet: string): Promise<string | null> {
+    // SOLANA TODO: resolve a Solana name service (e.g. SNS/Bonfida .sol) if desired.
+    return null
   }
 
   static async getNameByWalletOrDefault(wallet: string): Promise<string> {
-    const result = await db.query('embedded/get-avatar-name', `select name from avatars where lower(owner)=lower($1) limit 1`, [wallet])
+    // SOLANA: owner is a case-sensitive base58 pubkey — compare exactly, no lower()
+    const result = await db.query('embedded/get-avatar-name', `select name from avatars where owner=$1 limit 1`, [wallet])
     return (result.rows && result.rows[0]?.name) || wallet.slice(0, 10)
   }
 

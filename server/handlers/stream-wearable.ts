@@ -1,7 +1,8 @@
-import { ethers } from 'ethers'
+// SOLANA: replaced ethers/EVM address validation with isSolanaAddress; token ids
+// are base58 Metaplex mints (not hex). Wearable metadata/ownership resolves via DAS.
 import { Request, Response } from 'express'
 import { ChainIdentifier, SUPPORTED_CHAINS, SUPPORTED_CHAINS_KEYS } from '../../common/helpers/chain-helpers'
-import { isHex } from '../lib/helpers'
+import { isSolanaAddress } from '../lib/solana-helpers'
 import Wearable from '../wearable'
 
 const MAX_AGE = 60 * 60 * 24 * 7
@@ -25,14 +26,22 @@ export default async function streamWearable(req: Request, res: Response) {
     wearable = (await Wearable.loadFromTokenIdAndCollectionId(token_id, collection_id)) as Wearable
   } else if ('chain_identifier' in req.params && 'collection_address' in req.params) {
     // VERSION 2 THAT HANDLES CHAIN IDENTIFIER AND COLLECTION ADDRESS
+    // SOLANA: collection_address and token_id are base58 (collection mint + asset
+    // mint). Dropped the hex-tokenId detection + parseInt(...,16) branch — the mint
+    // string is used directly, not coerced to a number.
     const identifier = req.params.chain_identifier
     const address = req.params.collection_address
-    const tokenID = isHex(req.params.token_id) ? parseInt(req.params.token_id, 16) : parseInt(req.params.token_id, 10)
+    const tokenMint = req.params.token_id
 
-    if (!SUPPORTED_CHAINS_KEYS.includes(identifier) || !ethers.isAddress(address) || isNaN(tokenID)) {
+    if (!SUPPORTED_CHAINS_KEYS.includes(identifier) || !isSolanaAddress(address) || !isSolanaAddress(tokenMint)) {
       return res.status(400).json({ success: false })
     }
-    wearable = await Wearable.loadFromChainInfo(SUPPORTED_CHAINS[identifier as ChainIdentifier], address, tokenID)
+    // SOLANA TODO: resolve wearable metadata/ownership from the asset mint via DAS
+    // (getActiveChain().rpcUrl `getAsset`) and getNftHolder, then back the .vox
+    // lookup with the base58 mint. Wearable.loadFromChainInfo still expects a
+    // numeric chainid + numeric tokenId; update its signature/query (owned by the
+    // wearable model package) to accept base58 collection mint + asset mint.
+    wearable = await Wearable.loadFromChainInfo(SUPPORTED_CHAINS[identifier as ChainIdentifier], address, tokenMint as any)
   }
 
   if (!wearable) {

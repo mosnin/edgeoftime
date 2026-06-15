@@ -1,7 +1,8 @@
 import Womp, { WompType } from '../womp'
 import { named } from '../lib/logger'
 import fetch from 'node-fetch'
-import { ethers } from 'ethers'
+// SOLANA: author wallet is a base58 ed25519 pubkey, validated with isSolanaAddress.
+import { isSolanaAddress } from '../lib/solana-helpers'
 import { Request, Response } from 'express'
 import { VoxelsUserRequest } from '../user'
 
@@ -16,7 +17,8 @@ export async function createWomp(req: VoxelsUserRequest, res: Response) {
     return
   }
 
-  if (!author || !ethers.isAddress(author)) {
+  // SOLANA: validate author as a Solana pubkey (never lowercase a base58 key).
+  if (!author || !isSolanaAddress(author)) {
     res.status(400).send({ success: false, message: 'Bad author' })
     return
   }

@@ -1,22 +1,27 @@
-import { MetaMaskInpageProvider } from '@metamask/providers'
-import { Contract, BrowserProvider, Signer } from 'ethers'
-import { ssrFriendlyWindow } from '../../../common/helpers/utils'
+// SOLANA: was the MetaMask/ethers login layer. Now uses the Phantom injected
+// provider (window.solana) from login-helper.ts. A "wallet" is a base58 ed25519
+// pubkey (NEVER 0x-hex, NEVER lowercased). The public shape used by the app is
+// preserved.
 import { PanelType } from '../components/panel'
 import Snackbar from '../components/snackbar'
 import { app, AppEvent, Appstate } from '../state'
-import { changeNetwork, getCurrentChainId, getUserAccounts, signMessage } from './login-helper'
+import {
+  changeNetwork,
+  getCurrentChainId,
+  getPhantomProvider,
+  getUserAccounts,
+  PhantomProvider,
+  signMessage,
+} from './login-helper'
 
 const jsonHeaders = {
   Accept: 'application/json, text/plain, */*',
   'Content-Type': 'application/json',
 }
 
-const ParcelContract = require('../../../common/contracts/parcel.json')
-
 export class StateLogin {
-  signer: Signer | null = null
-  provider: MetaMaskInpageProvider | null = null
-  contract: Contract | null = null
+  // SOLANA: provider is the Phantom injected provider; ethers Signer/Contract removed.
+  provider: PhantomProvider | null = null
   showSnackbar = Snackbar.show ?? console.log
   private message: string | null = null
   #app: Appstate
@@ -33,8 +38,9 @@ export class StateLogin {
     return this.#app.signedIn
   }
 
+  // SOLANA: kept the export name; now means "is Phantom available".
   get hasMetamask(): boolean {
-    return !!window.ethereum && window.ethereum?.isMetaMask
+    return !!getPhantomProvider()
   }
 
   onToken(key: string, name: string | null, isNewUser: boolean): void {
@@ -56,10 +62,9 @@ export class StateLogin {
       if (callback) callback()
       return true
     }
+    // SOLANA: cluster is fixed by config — changeNetwork is a no-op success.
     const r = await changeNetwork(this.provider, chainId)
     const { success, error } = r
-    const newEthersJSProvider = this.ethersWeb3Provider()
-    this.signer = newEthersJSProvider.getSigner() as any
     if (success) {
       !!callback && callback()
     } else {
@@ -74,27 +79,14 @@ export class StateLogin {
     return await getCurrentChainId(this.provider)
   }
 
-  getSigner() {
-    if (!this.signer) throw new Error('Signer not available')
-    return this.signer
-  }
-
-  ethersWeb3Provider(): BrowserProvider {
-    const provider = this.provider
-    if (provider && provider instanceof BrowserProvider) return provider as BrowserProvider
-    return new BrowserProvider(provider as any)
-  }
-
   async refreshProvider() {
     if (!this.provider) {
       await this.setProvider()
       return true
     }
+    // SOLANA: re-connect Phantom (silent if already trusted) to confirm access.
     const accounts = await getUserAccounts(this.provider)
-    if (!accounts) return false
-    if (!this.provider) return false
-    const prov = this.ethersWeb3Provider()
-    this.signer = prov.getSigner() as any
+    if (!accounts || !accounts.length) return false
     return true
   }
 
@@ -114,8 +106,8 @@ export class StateLogin {
     this.message = this.generateMessage()
 
     // SOLANA: sign the Terms of Service message with Phantom (ed25519) instead of
-    // an ethers personal_sign. `unverifiedWallet` is a base58 pubkey set by wallet-connect.
-    const signature = await signMessage(this.state.unverifiedWallet, this.message)
+    // an ethers personal_sign. `unverifiedWallet` is a base58 pubkey set in setProvider().
+    const signature = await signMessage(this.provider, this.state.unverifiedWallet, this.message)
     if (!signature) {
       console.error('Signature could not be generated')
       this.#app.emit(AppEvent.ErrorLogin)
@@ -157,33 +149,27 @@ export class StateLogin {
 
   handleEvents = async () => {
     if (!this.provider) return
+    // SOLANA: Phantom emits 'disconnect' and 'accountChanged' (instead of 'chainChanged').
     this.provider.on('disconnect', () => {
-      this.#app.emit(AppEvent.ProviderMessage, 'Web3 provider disconnected.')
+      this.#app.emit(AppEvent.ProviderMessage, 'Wallet disconnected.')
     })
-    this.provider.on('chainChanged', (chainId) => {
-      this.#app.emit(AppEvent.ProviderMessage, 'Switched to chain to ' + chainId)
-      console.info('Switched to chain ', chainId)
+    this.provider.on('accountChanged', (publicKey: any) => {
+      const wallet = publicKey?.toBase58 ? publicKey.toBase58() : String(publicKey ?? '')
+      this.#app.emit(AppEvent.ProviderMessage, 'Switched account to ' + wallet)
+      console.info('Switched account ', wallet)
     })
-  }
-
-  async setSigner() {
-    if (!this.provider) {
-      console.warn('No selected login')
-      return
-    }
-    const prov = this.ethersWeb3Provider()
-    this.signer = prov.getSigner() as any
   }
 
   private async setProvider() {
-    this.provider = ssrFriendlyWindow?.ethereum as MetaMaskInpageProvider
+    // SOLANA: resolve Phantom from window.solana / window.phantom.solana.
+    this.provider = getPhantomProvider()
 
     if (this.signedIn) {
       this.handleEvents()
       return
     }
 
-    if (!this.provider || typeof this.provider.request !== 'function') {
+    if (!this.provider || typeof this.provider.connect !== 'function') {
       this.provider = null
       return false
     }
@@ -194,9 +180,9 @@ export class StateLogin {
       return false
     }
 
+    // SOLANA: wallet is the base58 pubkey from Phantom — kept verbatim.
     this.#app.setState({ unverifiedWallet: accounts[0] })
     this.handleEvents()
-    await this.setSigner()
     return true
   }
 

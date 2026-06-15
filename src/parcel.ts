@@ -1,4 +1,6 @@
-import { ethers } from 'ethers'
+// SOLANA: dropped `ethers`; ownership/address logic now uses base58 helpers
+import { isSolanaAddress } from '../common/helpers/parcel-helper'
+import { isUnowned } from '../common/helpers/solana-chain-helpers'
 import { cameraPosition } from './utils/camera'
 import { debounce, throttle } from 'lodash'
 import type { NdArray } from 'ndarray'
@@ -32,7 +34,7 @@ import { ParcelEventMap } from './utils/parcel-event-map'
 import { GLASS_MAX_VIEW_DISTANCE } from './voxel-field'
 import { Action } from '../common/messages'
 
-const PARCEL_CONTRACT_ABI = require('../common/contracts/parcel.json')
+// SOLANA: removed EVM parcel contract ABI; minting is a Metaplex NFT mint (see WP5/WP19)
 
 const isTest = process.env.NODE_ENV === 'test'
 export const UNBAKED = '/textures/03-white-square.png'
@@ -269,22 +271,11 @@ export default class Parcel extends TypedEventTarget<ParcelEventMap> {
   }
 
   async requestMint() {
-    try {
-      const provider = new ethers.BrowserProvider(window.ethereum as any)
-      const signer = await provider.getSigner()
-
-      const contract = new ethers.Contract('0x79986aF15539de2db9A5086382daEdA917A9CF0C', PARCEL_CONTRACT_ABI.abi, signer)
-      const owner = '0x2D891ED45C4C3EAB978513DF4B92a35Cf131d2e2'
-      const tx = await contract.mint(owner, this.id, this.x1, this.y1, this.z1, this.x2, this.y2, this.z2, ethers.parseEther('0'))
-
-      // console.log('Transaction submitted:', tx.hash)
-
-      await tx.wait()
-
-      // console.log('Transaction confirmed')
-    } catch (err) {
-      console.error('On-chain minting failed:', err)
-    }
+    // SOLANA TODO: mint this parcel as a Metaplex NFT via a Solana wallet adapter
+    // (Phantom) + server claim endpoint (WP5). The EVM ethers mint flow has been
+    // removed; on Solana a parcel is owned by whoever holds its NFT mint, and the
+    // mint/claim is driven by the parcels controller, not a client contract call.
+    console.warn('requestMint: Solana parcel minting not implemented yet')
   }
 
   get disableField() {
@@ -354,9 +345,11 @@ export default class Parcel extends TypedEventTarget<ParcelEventMap> {
       return true
     }
 
-    const userWallet = window.user?.wallet?.toLowerCase()
-    if (userWallet) {
-      const canEditList = [...this.contributors, ...this.owners].map((x) => (x ? x.toLowerCase().trim() : '')).filter((x) => typeof x === 'string' && x.trim())
+    // SOLANA: wallets are base58 ed25519 pubkeys (case-sensitive) — compare with
+    // exact equality, never .toLowerCase(). An UNOWNED parcel ('') matches no one.
+    const userWallet = window.user?.wallet?.trim()
+    if (userWallet && isSolanaAddress(userWallet)) {
+      const canEditList = [...this.contributors, ...this.owners].map((x) => (x ? x.trim() : '')).filter((x) => !isUnowned(x) && isSolanaAddress(x))
       if (canEditList.find((w) => userWallet === w)) {
         return true
       }

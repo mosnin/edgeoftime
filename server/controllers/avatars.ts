@@ -4,12 +4,13 @@ import cache from '../cache'
 import updateAvatar, { getAvatarSuspended, suspendAvatar, unsuspendAvatar, updateAvatarAppearance } from '../handlers/update-avatar'
 import { createRequestHandlerForQuery, queryAndCallback } from '../lib/query-helpers'
 
-import { ethers } from 'ethers'
+// SOLANA: dropped `ethers`; validate wallets/contracts with isSolanaAddress (base58)
 import rateLimit from 'express-rate-limit'
 import { PassportStatic } from 'passport'
 import { tokensToEnter } from '../../common/messages/parcel'
 import Avatar from '../avatar'
 import { userOwnsToken } from '../lib/ethereum-helpers'
+import { isSolanaAddress } from '../lib/solana-helpers'
 import { Db } from '../pg'
 import { VoxelsUser } from '../user'
 
@@ -119,7 +120,7 @@ export default function AvatarsController(db: Db, passport: PassportStatic, app:
       from
         avatars
       where
-        lower(owner)=lower($1) OR lower(name)=lower($1)`,
+        owner=$1 OR lower(name)=lower($1)`, // SOLANA: owner is a case-sensitive base58 pubkey
       [req.params.nameOrWallet],
     )
 

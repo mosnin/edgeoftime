@@ -37,7 +37,8 @@ import ModelsController from './controllers/models'
 import cache, { defaultCache, noCache } from './cache'
 import db, { pgp } from './pg'
 
-import { ethers } from 'ethers'
+// SOLANA: dropped `ethers` import; address validation now uses isSolanaAddress (base58 ed25519 pubkey)
+import { isSolanaAddress } from './lib/solana-helpers'
 import type { Express, Request, Response } from 'express'
 import express from 'express'
 import basicAuth from 'express-basic-auth'
@@ -429,7 +430,8 @@ app.get('/api/helper/typeOfContract/:chain_identifier/:contract', cache('30 seco
     res.status(400).json({ success: false, message: 'Unsupported' })
     return
   }
-  if (!req.params.contract || !ethers.isAddress(req.params.contract)) {
+  // SOLANA: validate the contract param as a base58 Solana address instead of a 0x hex address
+  if (!req.params.contract || !isSolanaAddress(req.params.contract)) {
     res.status(404).json({ success: false })
     return
   }
